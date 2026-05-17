@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Type scale</title>
+<link rel="stylesheet" href="card.css">
+<style>
+  .stack { display: flex; flex-direction: column; }
+  .row {
+    display: grid;
+    grid-template-columns: 56px 56px 1fr;
+    gap: 16px;
+    align-items: baseline;
+    padding: 8px 0;
+    border-bottom: 1px dashed var(--line-faint);
+  }
+  .row:last-child { border-bottom: 0; }
+  .row .size, .row .weight {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--ink-faint);
+    letter-spacing: 0.04em;
+  }
+  .sample { color: var(--ink-strong); font-family: var(--font-mono); }
+</style>
+</head>
+<body>
+<div class="card">
+  <span class="label">jetbrains mono · 10 to 18 px · 300 / 400 / 500</span>
+  <div class="stack">
+    <div class="row"><span class="size">18</span><span class="weight">500</span><span class="sample" style="font-size:18px;font-weight:500">Module title</span></div>
+    <div class="row"><span class="size">15</span><span class="weight">500</span><span class="sample" style="font-size:15px;font-weight:500">Subhead</span></div>
+    <div class="row"><span class="size">13</span><span class="weight">500</span><span class="sample" style="font-size:13px;font-weight:500">Widget title</span></div>
+    <div class="row"><span class="size">13</span><span class="weight">400</span><span class="sample" style="font-size:13px;font-weight:400;color:var(--ink-muted)">Body copy in the popover surface.</span></div>
+    <div class="row"><span class="size">12</span><span class="weight">400</span><span class="sample" style="font-size:12px;font-weight:400;color:var(--ink-muted)">caption · secondary copy</span></div>
+    <div class="row"><span class="size">11</span><span class="weight">400</span><span class="sample" style="font-size:11px;font-weight:400;color:var(--ink-soft)">meta · timestamp · hint</span></div>
+    <div class="row"><span class="size">10</span><span class="weight">400</span><span class="sample label" style="font-size:10px">TRACKED CAPS LABEL</span></div>
+  </div>
+</div>
+</body>
+</html>

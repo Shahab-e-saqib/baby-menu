@@ -1,0 +1,219 @@
+import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { promisify } from "node:util";
+import { mockAgentCommand } from "acp-mock";
+import { afterEach, describe, expect, it } from "vitest";
+import { BabyMenuAgentRuntime } from "../src/main/agent-runtime";
+
+const execFileAsync = promisify(execFile);
+const repoRoot = resolve(import.meta.dirname, "..");
+const acpMockBinPath = join(repoRoot, "node_modules", "acp-mock", "dist", "cli.js");
+
+async function git(cwd: string, args: string[]) {
+  return execFileAsync("git", args, { cwd });
+}
+
+async function gitText(cwd: string, args: string[]) {
+  const { stdout } = await git(cwd, args);
+  return stdout.trim();
+}
+
+async function createRepo() {
+  const repo = await mkdtemp(join(tmpdir(), "baby-menu-acp-e2e-"));
+  await git(repo, ["init", "-b", "main"]);
+  await git(repo, ["config", "user.email", "tests@example.com"]);
+  await git(repo, ["config", "user.name", "Baby Menu ACP Tests"]);
+  await writeFile(join(repo, "README.md"), "# fixture\n");
+  await git(repo, ["add", "."]);
+  await git(repo, ["commit", "-m", "initial"]);
+  return repo;
+}
+
+async function readJsonLines(filePath: string): Promise<Record<string, unknown>[]> {
+  if (!existsSync(filePath)) return [];
+  return (await readFile(filePath, "utf8"))
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+async function readTurnLogs(repo: string): Promise<Record<string, unknown>[]> {
+  const logDir = join(repo, ".cache", "baby-menu", "agent-turns");
+  if (!existsSync(logDir)) return [];
+  const files = await readdir(logDir);
+  return Promise.all(files.map((file) => readFile(join(logDir, file), "utf8").then((text) => JSON.parse(text) as Record<string, unknown>)));
+}
+
+function buildMockCommand(eventLogPath: string) {
+  return mockAgentCommand({
+    bin: acpMockBinPath,
+    eventLogPath,
+    agentMessageJson: {
+      summary: "mock acp turn completed",
+      changed: ["README.md"],
+    },
+    appendFile: {
+      path: "../README.md",
+      text: "- edited by acp-mock\n",
+    },
+  });
+}
+
+function buildSlowMockCommand(eventLogPath: string) {
+  return mockAgentCommand({
+    bin: acpMockBinPath,
+    eventLogPath,
+    promptDelayMs: 1_000,
+  });
+}
+
+describe("BabyMenuAgentRuntime ACP e2e", () => {
+  const tempDirs: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "runs a prompt through real acpx against acp-mock and records a change session",
+    async () => {
+      const repo = await createRepo();
+      tempDirs.push(repo);
+      const logDir = await mkdtemp(join(tmpdir(), "baby-menu-acp-logs-"));
+      tempDirs.push(logDir);
+      const mockLogPath = join(logDir, "mock-acp.jsonl");
+
+      const runtime = new BabyMenuAgentRuntime(repo, {
+        agentName: "mock-target",
+        registryOverrides: {
+          "mock-target": buildMockCommand(mockLogPath),
+        },
+      });
+
+      const result = await runtime.send("Add a simple test line");
+      const readme = await readFile(join(repo, "README.md"), "utf8");
+      const events = (await readJsonLines(mockLogPath)).map((entry) => entry.event);
+      const turnLogs = await readTurnLogs(repo);
+
+      expect(result.assistantText).toContain("mock acp turn completed");
+      expect(result.session).toMatchObject({
+        startedClean: true,
+        canSave: true,
+        canRollback: true,
+      });
+      expect(readme).toContain("edited by acp-mock");
+      expect(events).toContain("agent:initialize");
+      expect(events).toContain("agent:newSession");
+      expect(events).toContain("agent:prompt:start");
+      expect(events).toContain("agent:prompt:done");
+      expect(events).toContain("workspace:changed");
+      expect(turnLogs).toHaveLength(1);
+      expect(turnLogs[0]).toMatchObject({
+        agentName: "mock-target",
+        status: "completed",
+      });
+      expect(turnLogs[0]?.events).toEqual(expect.arrayContaining([expect.objectContaining({ type: "text_delta" })]));
+
+      const save = await runtime.save("Accept acp-mock changes");
+      expect(save.ok).toBe(true);
+      expect(await gitText(repo, ["rev-list", "--count", "HEAD"])).toBe("2");
+      expect(await gitText(repo, ["log", "-1", "--pretty=%s"])).toBe("Accept acp-mock changes");
+    },
+    30_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "rolls back changes produced through acpx and acp-mock",
+    async () => {
+      const repo = await createRepo();
+      tempDirs.push(repo);
+      const logDir = await mkdtemp(join(tmpdir(), "baby-menu-acp-logs-"));
+      tempDirs.push(logDir);
+      const mockLogPath = join(logDir, "mock-acp.jsonl");
+
+      const runtime = new BabyMenuAgentRuntime(repo, {
+        agentName: "mock-target",
+        registryOverrides: {
+          "mock-target": buildMockCommand(mockLogPath),
+        },
+      });
+
+      await runtime.send("Add a line that should be reverted");
+      expect(await readFile(join(repo, "README.md"), "utf8")).toContain("edited by acp-mock");
+
+      const rollback = await runtime.rollback();
+
+      expect(rollback.ok).toBe(true);
+      expect(await readFile(join(repo, "README.md"), "utf8")).toBe("# fixture\n");
+      expect(await gitText(repo, ["status", "--porcelain"])).toBe("");
+      expect(await gitText(repo, ["rev-list", "--count", "HEAD"])).toBe("1");
+    },
+    30_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "blocks ACP startup when the repo is dirty so rollback remains safe",
+    async () => {
+      const repo = await createRepo();
+      tempDirs.push(repo);
+      const logDir = await mkdtemp(join(tmpdir(), "baby-menu-acp-logs-"));
+      tempDirs.push(logDir);
+      const mockLogPath = join(logDir, "mock-acp.jsonl");
+      await writeFile(join(repo, "README.md"), "# user changed this first\n");
+
+      const runtime = new BabyMenuAgentRuntime(repo, {
+        agentName: "mock-target",
+        registryOverrides: {
+          "mock-target": buildMockCommand(mockLogPath),
+        },
+      });
+
+      const result = await runtime.send("Try to edit anyway");
+      const events = await readJsonLines(mockLogPath);
+
+      expect(result.assistantText).toContain("working tree is already dirty");
+      expect(result.session).toMatchObject({
+        startedClean: false,
+        canSave: false,
+        canRollback: false,
+      });
+      expect(events).toEqual([]);
+    },
+    30_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "returns a recoverable session when an ACP turn times out",
+    async () => {
+      const repo = await createRepo();
+      tempDirs.push(repo);
+      const logDir = await mkdtemp(join(tmpdir(), "baby-menu-acp-logs-"));
+      tempDirs.push(logDir);
+      const mockLogPath = join(logDir, "mock-acp.jsonl");
+
+      const runtime = new BabyMenuAgentRuntime(repo, {
+        agentName: "mock-target",
+        requestTimeoutMs: 100,
+        registryOverrides: {
+          "mock-target": buildSlowMockCommand(mockLogPath),
+        },
+      });
+
+      const result = await runtime.send("Take too long");
+
+      expect(result.assistantText).toContain("timed out");
+      expect(result.assistantText).toContain("mock-target agent");
+      expect(result.assistantText).toContain("100ms");
+      expect(result.session).toMatchObject({
+        startedClean: true,
+        canSave: true,
+        canRollback: true,
+      });
+    },
+    30_000,
+  );
+});

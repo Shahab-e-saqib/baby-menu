@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en" data-theme="wireframe">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Claude Code Quota Widget Recipe</title>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@5/themes.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  </head>
+  <body class="bg-base-200 text-base-content">
+    <main class="mx-auto max-w-4xl space-y-5 p-6 text-base leading-7 sm:p-10 [&_code]:text-sm [&_h2]:mb-3 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:text-lg [&_h3]:font-semibold [&_li]:mb-1 [&_li]:leading-7 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-6 [&_p]:mb-2 [&_p]:leading-7 [&_pre]:my-3 [&_pre_code]:text-sm [&_section]:space-y-3 [&_table]:text-sm [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-6">
+      <h1 class="text-3xl font-bold tracking-tight">Claude Code Quota Widget Recipe</h1>
+
+      <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
+        <h2>Capability</h2>
+        <p>Add a baby-menu widget that shows Claude Code usage limits in the menu popover.</p>
+        <p>The widget should prefer real local Claude credentials and CLI output, then fall back to clearly labeled mock data only when no usable local source is available.</p>
+        <p>This recipe is self-contained. Do not require external source code, websites, or implementation guides to complete it.</p>
+      </section>
+
+      <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
+        <h2>User-Facing Behavior</h2>
+        <ul>
+          <li>Show current session usage and weekly usage when available.</li>
+          <li>Show model-specific weekly usage for Sonnet and Opus when available.</li>
+          <li>Show reset time text for each available window.</li>
+          <li>Show account email or plan when available.</li>
+          <li>Show last refreshed time.</li>
+          <li>Show loading, success, stale, unavailable, and error states.</li>
+          <li>Refresh automatically every 5 minutes by default.</li>
+          <li>Expose a manual refresh button.</li>
+        </ul>
+      </section>
+
+      <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
+        <h2>Recommended Data Source Order</h2>
+        <table class="table table-zebra">
+          <thead>
+            <tr><th>Priority</th><th>Source</th><th>Use When</th><th>Expected Data</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>Claude OAuth usage API</td>
+              <td>A usable OAuth access token exists.</td>
+              <td>Five-hour, seven-day, Sonnet weekly, Opus weekly, extra usage spend, plan hints.</td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>Claude CLI <code>/usage</code> probe</td>
+              <td>OAuth is unavailable but the <code>claude</code> CLI is installed and signed in.</td>
+              <td>Current session percentage, current week percentage, reset text, account and org lines when present.</td>
+            </tr>
+            <tr>
+              <td>3</td>
+              <td>Claude web API with manual cookie</td>
+              <td>The user explicitly provides a Claude <code>sessionKey</code> cookie later.</td>
+              <td>Session, weekly, model-specific usage, extra usage spend, account email.</td>
+            </tr>
+            <tr>
+              <td>4</td>
+              <td>Mock provider</td>
+              <td>No real source is configured or readable.</td>
+              <td>Static sample values labeled <strong>Mock data</strong>.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
+        <h2>OAuth Usage API Details</h2>
+        <p>Credential locations to check from the main process only:</p>
+        <ul>
+          <li><code>~/.claude/.credentials.json</code></li>
+          <li>Future app-local credential cache under Electron user data, not committed to the repo.</li>
+        </ul>
+        <p>Look for an OAuth access token with scope that can call usage APIs. Tokens with only inference scope may fail.</p>
+        <p>Request:</p>
+        <pre class="mockup-code p-4 overflow-auto"><code>GET https://api.anthropic.com/api/oauth/usage
+Authorization: Bearer &lt;access_token&gt;
+anthropic-beta: oauth-2025-04-20</code></pre>
+        <p>Map response fields into this normalized shape:</p>
+        <pre class="mockup-code p-4 overflow-auto"><code>type ClaudeQuotaSnapshot = {
+  source: "oauth" | "cli" | "web" | "mock";
+  accountEmail?: string;
+  plan?: string;
+  windows: Array&lt;{
+    id: "five_hour" | "seven_day" | "seven_day_sonnet" | "seven_day_opus" | "extra_usage";
+    label: string;
+    percentUsed?: number;
+    percentRemaining?: number;
+    resetText?: string;
+    resetAt?: string;
+    spentUsd?: number;
+    limitUsd?: number;
+  }&gt;;
+  refreshedAt: string;
+  stale: boolean;
+};</code></pre>
+        <p>Field mapping guidance:</p>
+        <ul>
+          <li><code>five_hour</code> becomes the current session window.</li>
+          <li><code>seven_day</code> becomes the weekly window and should be the primary fallback if five-hour data is absent.</li>
+          <li><code>seven_day_sonnet</code> and <code>seven_day_opus</code> become model-specific weekly windows.</li>
+          <li><code>extra_usage</code> becomes extra usage spend and limit if present.</li>
+          <li>Clamp percentages to the inclusive range <code>0..100</code>.</li>
+        </ul>
+      </section>
+
+      <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
+        <h2>Claude CLI Probe Details</h2>
+        <p>Run privileged CLI work in the Electron main process. Do not expose Node APIs to the renderer.</p>
+        <p>Command strategy:</p>
+        <ul>
+          <li>Check whether <code>claude</code> exists on <code>PATH</code>.</li>
+          <li>Start <code>claude --allowed-tools ""</code> in a controlled child process or PTY.</li>
+          <li>Send <code>/usage</code>.</li>
+          <li>Capture rendered output and strip ANSI escape sequences.</li>
+          <li>Send Enter retries only if the usage panel has not appeared after a short delay.</li>
+          <li>Terminate the process after the probe.</li>
+          <li>Use a hard timeout of 15 seconds for the first implementation.</li>
+        </ul>
+        <p>Parser expectations:</p>
+        <ul>
+          <li>Find sections near text like <code>Current session</code> and <code>Current week</code>.</li>
+          <li>Extract either percent used or percent left.</li>
+          <li>If percent left is parsed, compute <code>percentUsed = 100 - percentLeft</code>.</li>
+          <li>Extract nearby reset text such as <code>resets in 3h</code> or <code>resets at 5:00 PM</code>.</li>
+          <li>Optionally parse <code>Account:</code> and <code>Org:</code> lines.</li>
+          <li>Surface authentication, token expired, or CLI update prompts as user-visible errors.</li>
+        </ul>
+      </section>
+
+      <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
+        <h2>Manual Cookie Web API Details</h2>
+        <p>This is not required for the first implementation unless OAuth and CLI are insufficient.</p>
+        <p>If implemented, require explicit user-provided cookie text and keep it out of git.</p>
+        <p>Required cookie name: <code>sessionKey</code>, usually with value prefix <code>sk-ant-</code>.</p>
+        <p>API flow:</p>
+        <pre class="mockup-code p-4 overflow-auto"><code>GET https://claude.ai/api/organizations
+Cookie: sessionKey=&lt;value&gt;
+
+GET https://claude.ai/api/organizations/{orgId}/usage
+Cookie: sessionKey=&lt;value&gt;
+
+GET https://claude.ai/api/organizations/{orgId}/overage_spend_limit
+Cookie: sessionKey=&lt;value&gt;
+
+GET https://claude.ai/api/account
+Cookie: sessionKey=&lt;value&gt;</code></pre>
+      </section>
+
+      <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
+        <h2>Implementation Contract</h2>
+        <p>Create or edit these files:</p>
+        <ul>
+          <li><code>src/main/claude-quota.ts</code> for main-process data fetching and parsing.</li>
+          <li><code>src/main/ipc.ts</code> to expose <code>baby-menu:quota:claude</code>.</li>
+          <li><code>src/preload/index.ts</code> to expose <code>window.babyMenu.quota.claude()</code>.</li>
+          <li><code>src/renderer/widgets/claude-code-quota-widget.tsx</code> for the renderer widget.</li>
+          <li><code>src/renderer/menu/WidgetHost.tsx</code> or a widget registry file to register the widget.</li>
+          <li><code>tests/claude-quota.test.ts</code> for parser and fallback tests.</li>
+        </ul>
+        <p>IPC response shape:</p>
+        <pre class="mockup-code p-4 overflow-auto"><code>type QuotaResult&lt;T&gt; =
+  | { ok: true; data: T }
+  | { ok: false; error: string; sourceTried: string[]; mock?: T };</code></pre>
+      </section>
+
+      <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
+        <h2>Error Handling</h2>
+        <ul>
+          <li>If no token or CLI is available, show <code>Claude quota unavailable</code> and offer mock data labeled as mock.</li>
+          <li>If a request times out, show <code>Refresh timed out</code> and keep the previous successful value as stale.</li>
+          <li>If credentials are expired, show <code>Claude sign-in required</code>.</li>
+          <li>Never print token or cookie values in renderer errors, logs, or tests.</li>
+        </ul>
+      </section>
+
+      <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
+        <h2>Interactive Demo</h2>
+        <div class="card max-w-sm border border-base-300 bg-base-100 shadow">
+          <div class="card-body gap-4">
+          <h3 class="card-title">Claude Code quota</h3>
+          <p><strong id="remaining">68%</strong> weekly capacity remaining</p>
+          <progress id="bar" class="progress progress-primary" value="68" max="100"></progress>
+          <p id="stamp">Last refreshed just now</p>
+          <button id="refresh" class="btn btn-primary" type="button">Manual refresh</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
+        <h2>Acceptance Criteria</h2>
+        <ul>
+          <li>The widget displays current Claude quota or a clear unavailable state.</li>
+          <li>The widget displays source label: OAuth, CLI, Web, or Mock data.</li>
+          <li>The widget displays when it was last refreshed.</li>
+          <li>The widget refreshes on a timer.</li>
+          <li>The widget exposes a manual refresh action.</li>
+          <li>The widget shows stale previous values if a refresh fails after a prior success.</li>
+          <li>The widget shows a clear error state if quota cannot be read.</li>
+          <li>Tests cover parser success, parser missing data, timeout/error fallback, and mock fallback.</li>
+        </ul>
+      </section>
+    </main>
+    <script>
+      const values = [68, 54, 73, 61];
+      let index = 0;
+      document.getElementById("refresh").addEventListener("click", () => {
+        index = (index + 1) % values.length;
+        const value = values[index];
+        document.getElementById("remaining").textContent = `${value}%`;
+        document.getElementById("bar").value = value;
+        document.getElementById("stamp").textContent = `Last refreshed ${new Date().toLocaleTimeString()}`;
+      });
+    </script>
+  </body>
+</html>

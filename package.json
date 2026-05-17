@@ -1,0 +1,40 @@
+{
+  "name": "baby-menu",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "out/main/index.js",
+  "packageManager": "pnpm@11.1.1",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "postinstall": "install-electron",
+    "dev": "node scripts/dev.mjs",
+    "dev:reset": "node scripts/dev.mjs --reset",
+    "build": "electron-vite build",
+    "test": "vitest run tests",
+    "test:e2e": "vitest run tests/e2e-*.test.ts",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "6.0.2",
+    "acpx": "0.7.0",
+    "electron-vite": "5.0.0",
+    "react": "19.2.6",
+    "react-dom": "19.2.6"
+  },
+  "devDependencies": {
+    "@testing-library/react": "16.3.2",
+    "@types/node": "25.8.0",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "acp-mock": "1.1.0",
+    "electron": "42.1.0",
+    "jsdom": "29.1.1",
+    "typescript": "6.0.3",
+    "vite": "8.0.13",
+    "vitest": "4.1.6"
+  }
+}

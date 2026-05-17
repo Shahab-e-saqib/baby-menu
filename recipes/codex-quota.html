@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en" data-theme="wireframe">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Codex Quota Widget Recipe</title>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@5/themes.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  </head>
+  <body class="bg-base-200 text-base-content">
+    <main class="mx-auto max-w-4xl space-y-5 p-6 text-base leading-7 sm:p-10 [&_code]:text-sm [&_h2]:mb-3 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:text-lg [&_h3]:font-semibold [&_li]:mb-1 [&_li]:leading-7 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-6 [&_p]:mb-2 [&_p]:leading-7 [&_pre]:my-3 [&_pre_code]:text-sm [&_section]:space-y-3 [&_table]:text-sm [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-6">
+      <h1 class="text-3xl font-bold tracking-tight">Codex Quota Widget Recipe</h1>
+
+      <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
+        <h2>Capability</h2>
+        <p>Add a baby-menu widget that shows Codex usage limits, credits, and reset windows from local Codex credentials or CLI state.</p>
+        <p>The widget should prefer real local data and fall back to clearly labeled mock data only when no usable source is available.</p>
+        <p>This recipe is self-contained. Do not require external source code, websites, or implementation guides to complete it.</p>
+      </section>
+
+      <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
+        <h2>User-Facing Behavior</h2>
+        <ul>
+          <li>Show primary and secondary Codex usage windows when available.</li>
+          <li>Show reset countdown or reset timestamp for each window when available.</li>
+          <li>Show credit balance if available.</li>
+          <li>Show account email and plan type if available.</li>
+          <li>Show last refreshed time.</li>
+          <li>Show loading, success, stale, unavailable, and error states.</li>
+          <li>Refresh automatically every 5 minutes by default.</li>
+          <li>Expose a manual refresh button.</li>
+        </ul>
+      </section>
+
+      <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
+        <h2>Recommended Data Source Order</h2>
+        <table class="table table-zebra">
+          <thead>
+            <tr><th>Priority</th><th>Source</th><th>Use When</th><th>Expected Data</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>Codex OAuth usage API</td>
+              <td><code>~/.codex/auth.json</code> or <code>$CODEX_HOME/auth.json</code> contains usable OAuth credentials.</td>
+              <td>Rate limit windows, reset timestamps, account identity, plan hints, credit snapshot when available.</td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>Codex CLI RPC app server</td>
+              <td>The <code>codex</code> CLI is installed and signed in.</td>
+              <td>Rate limit windows, credits, account identity.</td>
+            </tr>
+            <tr>
+              <td>3</td>
+              <td>Manual status parser</td>
+              <td>A developer supplies saved <code>codex /status</code> output for tests or diagnostics.</td>
+              <td>Credits, five-hour limit, weekly limit, reset text.</td>
+            </tr>
+            <tr>
+              <td>4</td>
+              <td>Mock provider</td>
+              <td>No real source is configured or readable.</td>
+              <td>Static sample values labeled <strong>Mock data</strong>.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
+        <h2>OAuth Usage API Details</h2>
+        <p>Credential locations to check from the main process only:</p>
+        <ul>
+          <li><code>$CODEX_HOME/auth.json</code> if <code>CODEX_HOME</code> is set.</li>
+          <li><code>~/.codex/auth.json</code> otherwise.</li>
+        </ul>
+        <p>Request:</p>
+        <pre class="mockup-code p-4 overflow-auto"><code>GET https://chatgpt.com/backend-api/wham/usage
+Authorization: Bearer &lt;access_token&gt;</code></pre>
+        <p>If the token metadata includes a refresh timestamp and it is older than roughly 8 days, prefer returning a sign-in or refresh-needed error for the first implementation rather than silently using a stale token.</p>
+        <p>Normalize response data into this shape:</p>
+        <pre class="mockup-code p-4 overflow-auto"><code>type CodexQuotaSnapshot = {
+  source: "oauth" | "cli-rpc" | "status-text" | "mock";
+  accountEmail?: string;
+  plan?: string;
+  windows: Array&lt;{
+    id: "five_hour" | "weekly" | "primary" | "secondary";
+    label: string;
+    percentUsed?: number;
+    percentRemaining?: number;
+    resetText?: string;
+    resetAt?: string;
+  }&gt;;
+  credits?: {
+    balance?: number;
+    hasCredits?: boolean;
+    unlimited?: boolean;
+  };
+  refreshedAt: string;
+  stale: boolean;
+};</code></pre>
+      </section>
+
+      <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
+        <h2>Codex CLI RPC Details</h2>
+        <p>Run privileged CLI work in the Electron main process. Do not expose Node APIs to the renderer.</p>
+        <p>Command:</p>
+        <pre class="mockup-code p-4 overflow-auto"><code>codex -s read-only -a untrusted app-server</code></pre>
+        <p>JSON-RPC flow over stdin/stdout:</p>
+        <ol>
+          <li>Send <code>initialize</code> with a simple client name and version.</li>
+          <li>Send <code>account/read</code> to get account identity when available.</li>
+          <li>Send <code>account/rateLimits/read</code> to get windows and credits.</li>
+          <li>Terminate the child process after the request.</li>
+        </ol>
+        <p>Timeouts:</p>
+        <ul>
+          <li>Allow up to 15 seconds for app-server startup and initialize.</li>
+          <li>Allow up to 8 seconds per normal RPC method.</li>
+          <li>Kill the child process on timeout so future refreshes are not blocked.</li>
+        </ul>
+        <p>Expected data:</p>
+        <ul>
+          <li>Usage windows may arrive as primary/secondary or five-hour/weekly equivalents.</li>
+          <li>Credit data may include balance, hasCredits, and unlimited flags.</li>
+          <li>Account identity may include email and plan type.</li>
+        </ul>
+      </section>
+
+      <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
+        <h2>Status Text Parser Details</h2>
+        <p>Do not launch the interactive Codex TUI in the background for the first implementation.</p>
+        <p>Keep this parser for tests and manual diagnostics using captured <code>/status</code> text.</p>
+        <p>Parser expectations:</p>
+        <ul>
+          <li>Strip ANSI escape sequences.</li>
+          <li>Parse <code>Credits:</code> lines into <code>credits.balance</code> where possible.</li>
+          <li>Parse <code>5h limit</code> lines into a five-hour usage window.</li>
+          <li>Parse <code>Weekly limit</code> lines into a weekly usage window.</li>
+          <li>Extract percent used or remaining and reset text near each line.</li>
+          <li>Surface update prompts as <code>Codex CLI update needed</code>.</li>
+        </ul>
+      </section>
+
+      <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
+        <h2>Optional Web Dashboard Extras</h2>
+        <p>Do not implement browser-cookie scraping in the first widget unless the user explicitly asks for richer dashboard extras.</p>
+        <p>If implemented later, it must be opt-in and main-process only.</p>
+        <p>Dashboard URL: <code>https://chatgpt.com/codex/settings/usage</code>.</p>
+        <p>Potential extras include code review remaining, usage breakdown chart data, credits history, and credits purchase URL.</p>
+        <p>Cookie handling must never write secrets to committed files or renderer logs.</p>
+      </section>
+
+      <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
+        <h2>Implementation Contract</h2>
+        <p>Create or edit these files:</p>
+        <ul>
+          <li><code>src/main/codex-quota.ts</code> for main-process data fetching, RPC, and parsing.</li>
+          <li><code>src/main/ipc.ts</code> to expose <code>baby-menu:quota:codex</code>.</li>
+          <li><code>src/preload/index.ts</code> to expose <code>window.babyMenu.quota.codex()</code>.</li>
+          <li><code>src/renderer/widgets/codex-quota-widget.tsx</code> for the renderer widget.</li>
+          <li><code>src/renderer/menu/WidgetHost.tsx</code> or a widget registry file to register the widget.</li>
+          <li><code>tests/codex-quota.test.ts</code> for parser, RPC fallback, timeout, and mock tests.</li>
+        </ul>
+        <p>IPC response shape:</p>
+        <pre class="mockup-code p-4 overflow-auto"><code>type QuotaResult&lt;T&gt; =
+  | { ok: true; data: T }
+  | { ok: false; error: string; sourceTried: string[]; mock?: T };</code></pre>
+      </section>
+
+      <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
+        <h2>Error Handling</h2>
+        <ul>
+          <li>If no auth file or CLI is available, show <code>Codex quota unavailable</code> and offer mock data labeled as mock.</li>
+          <li>If the CLI app-server times out, show <code>Codex CLI timed out</code> and keep the previous successful value as stale.</li>
+          <li>If credentials are expired, show <code>Codex sign-in required</code>.</li>
+          <li>If macOS blocks the CLI executable, show <code>Codex CLI could not be launched</code>.</li>
+          <li>Never print token or cookie values in renderer errors, logs, or tests.</li>
+        </ul>
+      </section>
+
+      <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
+        <h2>Interactive Demo</h2>
+        <div class="card max-w-sm border border-base-300 bg-base-100 shadow">
+          <div class="card-body gap-4">
+          <h3 class="card-title">Codex status</h3>
+          <div class="grid grid-cols-[1fr_auto] items-center gap-3"><progress id="meter" class="progress progress-primary" value="42" max="100"></progress><strong id="value">42%</strong></div>
+          <p id="credits">Credits: 18.50</p>
+          <p id="stamp">Mock data refreshed just now</p>
+          <button id="refresh" class="btn btn-primary" type="button">Manual refresh</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
+        <h2>Acceptance Criteria</h2>
+        <ul>
+          <li>The widget displays current Codex quota state or a clear unavailable state.</li>
+          <li>The widget displays source label: OAuth, CLI RPC, Status text, or Mock data.</li>
+          <li>The widget displays when it was last refreshed.</li>
+          <li>The widget refreshes on a timer.</li>
+          <li>The widget exposes a manual refresh action.</li>
+          <li>The widget shows stale previous values if a refresh fails after a prior success.</li>
+          <li>The widget shows a clear error state if quota cannot be read.</li>
+          <li>Tests cover status parser success, parser missing data, CLI timeout/error fallback, and mock fallback.</li>
+        </ul>
+      </section>
+    </main>
+    <script>
+      const values = [42, 47, 39, 52];
+      const credits = [18.5, 17.9, 16.4, 20.0];
+      let index = 0;
+      document.getElementById("refresh").addEventListener("click", () => {
+        index = (index + 1) % values.length;
+        const value = values[index];
+        document.getElementById("meter").value = value;
+        document.getElementById("value").textContent = `${value}%`;
+        document.getElementById("credits").textContent = `Credits: ${credits[index].toFixed(2)}`;
+        document.getElementById("stamp").textContent = `Mock data refreshed ${new Date().toLocaleTimeString()}`;
+      });
+    </script>
+  </body>
+</html>

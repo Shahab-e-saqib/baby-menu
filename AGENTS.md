@@ -1,0 +1,110 @@
+# AGENTS.md
+
+This file provides guidance for developing baby-menu itself.
+Embedded agents launched from baby-menu should work from the active extension workspace and follow the copied `AGENTS.md` there for extension authoring.
+
+## Commands
+
+- `pnpm dev` - runs `scripts/dev.mjs`, prepares a gitignored `extensions-dev/` workspace by copying `extensions/AGENTS.md`, and runs `electron-vite dev` from the current checkout. The app itself sees current uncommitted changes, while the embedded agent is launched inside `extensions-dev/`.
+- `pnpm dev:reset` - removes `extensions-dev/`, recreates it with the latest `extensions/AGENTS.md`, and starts dev mode.
+- `pnpm build` - build main, preload, and renderer bundles into `out/`.
+- `pnpm test` - run all Vitest tests.
+- `pnpm test:e2e` - run only `tests/e2e-*.test.ts` (these spawn the real `acpx/runtime` against the `acp-mock` CLI in `node_modules/acp-mock/dist/cli.js`).
+- `pnpm typecheck` / `pnpm lint` - both run `tsc --noEmit` against `tsconfig.json`.
+- Single test: `pnpm vitest run tests/<name>.test.ts` (or `pnpm vitest run -t "<name pattern>"`).
+
+Use `pnpm` (declared `packageManager: pnpm@11.1.1`). Renderer dev server is pinned to port 5173 (`strictPort: true`).
+
+## Dev mode helpers
+
+- `BABY_MENU_KEEP_POPOVER_OPEN=1` disables the blur-to-hide behavior so the popover stays open while devtools / external windows have focus.
+- `BABY_MENU_AGENT=<agent-name>` selects the ACP agent. E2E tests pass `acpx-mock` via `registryOverrides`.
+- `process.env.VITEST` is checked in `src/main/app.ts` so importing the main entry from tests does not auto-start the Electron app.
+
+## Architecture
+
+This is a macOS tray-bar Electron app whose distinguishing idea is that an embedded agent (running via `acpx/runtime`) edits this same repo at runtime; git is used as the accept/rollback mechanism.
+
+Three processes, kept deliberately separate:
+
+1. **Main** (`src/main/`) - app lifecycle, tray, popover window, IPC, git, agent runtime. Never call agent or git from the renderer directly.
+2. **Preload** (`src/preload/index.ts`) - the stable bridge. Exposes `window.babyMenu` via `contextBridge`. Do not add one-off preload methods for each widget.
+3. **Renderer** (`src/renderer/`) - React UI: `AgentChat` + `WidgetHost`. Widgets should be hot reloadable and should not require an Electron restart for each new capability.
+4. **Extension server actions** - privileged filesystem, shell, network, credential, and token work should live behind extension-owned server actions invoked through the stable generic capability bridge.
+   Renderer widgets call these actions with `window.babyMenu.capabilities.invoke(extensionId, action, input)`.
+   Server actions live in the active extension workspace under `<extension-id>/server.ts` and export an `actions` object.
+   Do not add per-widget IPC channels or preload methods.
+
+Shared types live in `src/shared/contracts.ts` - `BabyMenuApi`, `BabyMenuWidget`, `GitSessionSnapshot`, etc. The `Window.babyMenu` global is declared here.
+
+`src/main/` module index:
+
+- `app.ts` - Electron lifecycle, popover window creation, wires tray + IPC. `package.json#main` points here via `out/main/index.js`.
+- `tray.ts` - macOS tray icon and click handling (`createBabyMenuTray`).
+- `popover.ts` - popover `BrowserWindow` options (`createPopoverOptions`), bounds math (`calculatePopoverBounds`), and renderer URL/file loading (`loadPopoverRenderer`).
+- `ipc.ts` - registers all `ipcMain` handlers exposed via the preload bridge; the single place new generic IPC routes are added.
+- `agent-runtime.ts` - `BabyMenuAgentRuntime` wrapping `acpx/runtime`; gates every `send()` through a change session.
+- `agent-turn-log.ts` - structured per-turn transcript log used by the renderer and tests.
+- `git-change-session.ts` - the production Save/Rollback safety boundary (see below).
+- `dev-extension-change-session.ts` - the dev-mode Save/Rollback boundary for gitignored extension workspaces.
+- `recipe-loader.ts` - discovers and parses `recipes/*.html`.
+- `server-action-registry.ts` - dynamically loads extension server actions from the active extension workspace and exposes them through the generic capability bridge.
+
+### Electron build wiring
+
+`electron.vite.config.ts` has three roots:
+
+- `main` entry: `src/main/app.ts` -> `out/main/index.js` (this is `package.json#main`).
+- `preload` entry: `src/preload/index.ts` -> `out/preload/index.js`.
+- `renderer` root: `src/renderer/` -> `out/renderer/`. In dev, main loads `process.env.ELECTRON_RENDERER_URL`; in production it loads `out/renderer/index.html` via `loadFile`.
+
+`createPopoverOptions` enforces `frame:false`, `contextIsolation:true`, `nodeIntegration:false`, `skipTaskbar:true`, `alwaysOnTop:true`. Do not relax these without a reason.
+
+### Agent runtime + git change sessions
+
+`BabyMenuAgentRuntime` (`src/main/agent-runtime.ts`) wraps `acpx/runtime`. Every `send()` call:
+
+1. Resolves the active extension workspace with `BABY_MENU_EXTENSIONS_DIR` or defaults to `extensions/`.
+2. Uses `DevExtensionChangeSession` for dev extension workspaces such as `extensions-dev/`, snapshotting that directory so Save keeps the generated files and Rollback restores the pre-turn contents.
+3. Uses `GitChangeSession.begin(rootDir)` for the tracked `extensions/` workspace. If the working tree is dirty, it short-circuits and returns a refusal message instead of running the agent - this is intentional; do not bypass it for tracked edits.
+4. Lazily constructs the ACP runtime with `createFileSessionStore({ stateDir: .cache/baby-menu/acp-sessions })` and `permissionMode: "approve-all"`.
+5. Uses a fixed `sessionKey: "baby-menu-agent-chat"` so the agent has a single persistent conversation.
+
+`GitChangeSession` (`src/main/git-change-session.ts`) is the safety boundary for Save/Rollback. Both operations refuse unless: the session started clean, the session is not already completed, and `HEAD` has not moved since the session began. `rollback()` runs `git reset --hard <recorded HEAD>` + `git clean -fd` - those destructive commands are only acceptable because of the preceding guards. Preserve this invariant.
+
+### Recipes and extensions
+
+- Recipes are HTML files in `recipes/`. `recipe-loader.ts` discovers `*.html`, sorts them, and extracts the title from `<title>` or first `<h1>`. They are intentionally HTML so both humans and the agent can read them and embed interactive demos.
+- Extensions live in the active extension workspace under `<extension-id>/` and may include `widget.tsx`, `server.ts`, and local helper files.
+- Widgets conform to `BabyMenuWidget` / `RefreshableBabyMenuWidget`. The `WidgetHost` owns refresh timing via `useWidgetRefresh` - widgets should not start their own polling.
+- New widgets and capabilities should be built as self-contained extensions behind the stable `window.babyMenu` bridge.
+- Extension server actions are discovered dynamically from the active extension workspace, so new or changed actions can be picked up without changing preload.
+- The embedded agent should be steered toward editing its active extension workspace. The Electron core in `src/main/`, `src/preload/`, and shared IPC wiring is meant to be boring infrastructure.
+
+### Recipe authoring best practices
+
+- Recipes must be self-contained implementation specs.
+- Do not tell the agent to inspect another repository, website, blog post, or external implementation guide before it can implement the recipe.
+- It is fine to mention inspiration or provenance, but copy the actionable details into the recipe itself: commands, endpoints, local file paths, parser expectations, fallback order, security notes, IPC shape, files to edit, tests to add, and acceptance criteria.
+- A recipe should let an agent implement the feature from the recipe plus this repo alone.
+- Each recipe should include a clear capability statement, expected user-facing behavior, recommended data-source order, implementation contract, error handling, security constraints, interactive demo, and acceptance criteria.
+- For privileged work, explicitly say that filesystem, shell, network, credential, and token access belongs in extension-owned server actions behind `window.babyMenu.capabilities.invoke`.
+- Renderer widgets should receive normalized data over `window.babyMenu` and should not add new preload methods for each capability.
+- If a real data source may be unavailable, define the mock fallback and require the UI to label it as mock data.
+- Define normalized TypeScript shapes in the recipe so the agent knows what data the main process should return to the renderer.
+- Include parser guidance for command or API output, including timeout behavior, stale-data behavior, and user-visible errors.
+- Never include or ask for committed secrets, tokens, cookie values, or local credential dumps.
+- Standalone recipe HTML should use daisyUI from CDN and the `wireframe` theme.
+- Include these tags in recipe HTML: `<link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />`, `<link href="https://cdn.jsdelivr.net/npm/daisyui@5/themes.css" rel="stylesheet" type="text/css" />`, and `<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>`.
+- Set `<html data-theme="wireframe">` on recipe pages.
+- Avoid custom `<style>` blocks in recipes unless there is a specific interaction that cannot be expressed with daisyUI and Tailwind utilities.
+- Keep recipe typography readable: use a bounded content width such as `max-w-4xl`, body copy around `text-base`, comfortable `leading-7`, clear heading hierarchy, restored bullet and numbered list styles, and smaller text for code and tables.
+- Prefer daisyUI components such as `card`, `table`, `btn`, `progress`, and `mockup-code` for recipe structure and demos instead of hand-written CSS.
+- When changing recipe conventions, update `tests/recipe-loader.test.ts` so the convention is protected by regression tests.
+
+## Conventions
+
+- TDD is required for bug fixes and new features (skip only for docs / metadata / ephemeral artifacts). Tests live in `tests/` at the repo root, not co-located.
+- TypeScript is strict; `moduleResolution: "Bundler"`, ESM (`"type": "module"`). Tests use Vitest with `vitest/globals` types.
+- Never auto-add agent co-author lines to commit messages.
+- Avoid em dashes; use plain `-`.
