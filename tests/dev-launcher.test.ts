@@ -17,6 +17,7 @@ function createHarness() {
   const createdDirs: string[] = [];
   const removedDirs: string[] = [];
   const copiedFiles: Array<{ source: string; destination: string }> = [];
+  const copiedDirectories: Array<{ source: string; destination: string }> = [];
 
   return {
     execCalls,
@@ -24,9 +25,11 @@ function createHarness() {
     createdDirs,
     removedDirs,
     copiedFiles,
+    copiedDirectories,
     mkdirSync: vi.fn((filePath: string) => createdDirs.push(filePath)),
     rmSync: vi.fn((filePath: string) => removedDirs.push(filePath)),
     copyFileSync: vi.fn((source: string, destination: string) => copiedFiles.push({ source, destination })),
+    cpSync: vi.fn((source: string, destination: string) => copiedDirectories.push({ source, destination })),
     execFileSync: vi.fn((command: string, args: string[], options?: { cwd?: string }) => {
       execCalls.push({ command, args, cwd: options?.cwd });
       if (args.join(" ") === "rev-parse --show-toplevel") return "/repo\n";
@@ -79,6 +82,10 @@ describe("dev launcher", () => {
       source: join("/repo", "extensions", "AGENTS.md"),
       destination: join("/repo", "extensions-dev", "AGENTS.md"),
     });
+    expect(harness.copiedDirectories).toContainEqual({
+      source: join("/repo", "extensions", "recipes"),
+      destination: join("/repo", "extensions-dev", "recipes"),
+    });
     expect(harness.execCalls).toEqual([{ command: "git", args: ["rev-parse", "--show-toplevel"], cwd: "/repo" }]);
     expect(harness.spawnCalls).toEqual([
       {
@@ -109,6 +116,10 @@ describe("dev launcher", () => {
       source: join("/repo", "extensions", "AGENTS.md"),
       destination: join("/tmp/baby-menu-dev-extensions", "AGENTS.md"),
     });
+    expect(harness.copiedDirectories).toContainEqual({
+      source: join("/repo", "extensions", "recipes"),
+      destination: join("/tmp/baby-menu-dev-extensions", "recipes"),
+    });
     expect(harness.spawnCalls[0]?.env).toEqual(expect.objectContaining({
       [EXTENSIONS_DIR_ENV]: "/tmp/baby-menu-dev-extensions",
     }));
@@ -127,6 +138,10 @@ describe("dev launcher", () => {
     expect(harness.copiedFiles).toContainEqual({
       source: join("/repo", "extensions", "AGENTS.md"),
       destination: join(devExtensionsDir, "AGENTS.md"),
+    });
+    expect(harness.copiedDirectories).toContainEqual({
+      source: join("/repo", "extensions", "recipes"),
+      destination: join(devExtensionsDir, "recipes"),
     });
     expect(harness.spawnCalls).toEqual([
       {

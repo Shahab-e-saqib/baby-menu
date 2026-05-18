@@ -7,7 +7,7 @@ export function getRepoRoot(): string {
 }
 
 export function getRecipesDir(rootDir = getRepoRoot()): string {
-  return join(rootDir, "recipes");
+  return join(getExtensionsDir(rootDir), "recipes");
 }
 
 export function getAgentStateDir(rootDir = getRepoRoot()): string {

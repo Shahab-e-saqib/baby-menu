@@ -29,6 +29,8 @@ describe("extension layout", () => {
     expect(instructions).toContain("server.ts");
     expect(instructions).toContain("window.babyMenu.capabilities.invoke");
     expect(instructions).toContain("Do not modify files outside this directory");
+    expect(instructions).toContain("recipes/*.html");
+    expect(instructions).toContain("Read the matching recipe before implementing");
   });
 
   it("exposes runtime widget design guidance to extension agents", async () => {

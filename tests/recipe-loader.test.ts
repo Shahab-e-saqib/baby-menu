@@ -1,10 +1,15 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { loadRecipes } from "../src/main/recipe-loader";
+import { getRecipesDir } from "../src/shared/paths";
 
 describe("loadRecipes", () => {
+  it("resolves recipes inside the active extension workspace", () => {
+    expect(getRecipesDir("/repo")).toBe("/repo/extensions/recipes");
+  });
+
   it("discovers the initial HTML recipes with titles", async () => {
-    const recipes = await loadRecipes(new URL("../recipes/", import.meta.url));
+    const recipes = await loadRecipes(new URL("../extensions/recipes/", import.meta.url));
 
     expect(recipes.map((recipe) => recipe.id).sort()).toEqual([
       "claude-code-quota",
@@ -15,8 +20,8 @@ describe("loadRecipes", () => {
 
   it("keeps quota recipes self-contained for agent implementation", async () => {
     const recipeUrls = [
-      new URL("../recipes/claude-code-quota.html", import.meta.url),
-      new URL("../recipes/codex-quota.html", import.meta.url),
+      new URL("../extensions/recipes/claude-code-quota.html", import.meta.url),
+      new URL("../extensions/recipes/codex-quota.html", import.meta.url),
     ];
 
     for (const recipeUrl of recipeUrls) {

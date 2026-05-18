@@ -5,8 +5,8 @@ Embedded agents launched from baby-menu should work from the active extension wo
 
 ## Commands
 
-- `pnpm dev` - runs `scripts/dev.mjs`, prepares a gitignored `extensions-dev/` workspace by copying `extensions/AGENTS.md`, and runs `electron-vite dev` from the current checkout. The app itself sees current uncommitted changes, while the embedded agent is launched inside `extensions-dev/`.
-- `pnpm dev:reset` - removes `extensions-dev/`, recreates it with the latest `extensions/AGENTS.md`, and starts dev mode.
+- `pnpm dev` - runs `scripts/dev.mjs`, prepares a gitignored `extensions-dev/` workspace by copying `extensions/AGENTS.md` and `extensions/recipes/`, and runs `electron-vite dev` from the current checkout. The app itself sees current uncommitted changes, while the embedded agent is launched inside `extensions-dev/`.
+- `pnpm dev:reset` - removes `extensions-dev/`, recreates it with the latest `extensions/AGENTS.md` and `extensions/recipes/`, and starts dev mode.
 - `pnpm build` - build main, preload, and renderer bundles into `out/`.
 - `pnpm test` - run all Vitest tests.
 - `pnpm test:e2e` - run only `tests/e2e-*.test.ts` (these spawn the real `acpx/runtime` against the `acp-mock` CLI in `node_modules/acp-mock/dist/cli.js`).
@@ -47,7 +47,7 @@ Shared types live in `src/shared/contracts.ts` - `BabyMenuApi`, `BabyMenuWidget`
 - `agent-turn-log.ts` - structured per-turn transcript log used by the renderer and tests.
 - `git-change-session.ts` - the production Save/Rollback safety boundary (see below).
 - `dev-extension-change-session.ts` - the dev-mode Save/Rollback boundary for gitignored extension workspaces.
-- `recipe-loader.ts` - discovers and parses `recipes/*.html`.
+- `recipe-loader.ts` - discovers and parses `recipes/*.html` from the active extension workspace.
 - `server-action-registry.ts` - dynamically loads extension server actions from the active extension workspace and exposes them through the generic capability bridge.
 
 ### Electron build wiring
@@ -74,7 +74,7 @@ Shared types live in `src/shared/contracts.ts` - `BabyMenuApi`, `BabyMenuWidget`
 
 ### Recipes and extensions
 
-- Recipes are HTML files in `recipes/`. `recipe-loader.ts` discovers `*.html`, sorts them, and extracts the title from `<title>` or first `<h1>`. They are intentionally HTML so both humans and the agent can read them and embed interactive demos.
+- Recipes are HTML files in `recipes/` inside the active extension workspace. `recipe-loader.ts` discovers `*.html`, sorts them, and extracts the title from `<title>` or first `<h1>`. They are intentionally HTML so the embedded agent can read them from its cwd and use embedded interactive demos.
 - Extensions live in the active extension workspace under `<extension-id>/` and may include `widget.tsx`, `server.ts`, and local helper files.
 - Widgets conform to `BabyMenuWidget` / `RefreshableBabyMenuWidget`. The `WidgetHost` owns refresh timing via `useWidgetRefresh` - widgets should not start their own polling.
 - New widgets and capabilities should be built as self-contained extensions behind the stable `window.babyMenu` bridge.

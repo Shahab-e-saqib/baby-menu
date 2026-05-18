@@ -14,7 +14,13 @@ Common files are:
 - `widget.tsx` for the renderer widget surface.
 - `server.ts` for privileged server actions.
 - Additional local helper files used only by this extension.
-- Optional notes or recipe files that make the extension understandable and shareable.
+- Optional notes that make the extension understandable and shareable.
+
+## Recipes
+
+Recipe-backed widget specs live in `recipes/*.html` inside this extension workspace.
+Read the matching recipe before implementing a recipe-backed widget.
+Recipes are self-contained specs for the embedded agent and should be treated as input, not generated extension output.
 
 The `hello-world` extension is only the starter state for a fresh Baby Menu install.
 The host hides `hello-world` automatically once real widgets are discovered.
