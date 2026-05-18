@@ -14,7 +14,7 @@ Common files are:
 - `widget.tsx` for the renderer widget surface.
 - `server.ts` for privileged server actions.
 - Additional local helper files used only by this extension.
-- Optional notes or recipe files that make the extension understandable and shareable.
+- Optional notes that make the extension understandable and shareable.
 
 ## Recipes
 

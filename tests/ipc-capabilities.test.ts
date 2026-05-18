@@ -20,6 +20,34 @@ describe("capabilities IPC", () => {
     vi.unstubAllEnvs();
   });
 
+  it("lists recipes from the active extension workspace", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "baby-menu-ipc-recipes-"));
+    const recipesDir = join(rootDir, "extensions-dev", "recipes");
+    await mkdir(recipesDir, { recursive: true });
+    await writeFile(
+      join(recipesDir, "daily-standup.html"),
+      `<html><head><title>Daily Standup</title></head><body><h1>Fallback</h1></body></html>\n`,
+    );
+    vi.stubEnv("BABY_MENU_EXTENSIONS_DIR", join(rootDir, "extensions-dev"));
+    const { registerIpcHandlers } = await import("../src/main/ipc");
+    const agentRuntime = {
+      send: vi.fn(),
+      save: vi.fn(),
+      rollback: vi.fn(),
+    };
+
+    registerIpcHandlers(rootDir, agentRuntime);
+
+    await expect(handlers.get("baby-menu:recipes:list")?.({})).resolves.toEqual([
+      {
+        id: "daily-standup",
+        title: "Daily Standup",
+        fileName: "daily-standup.html",
+        path: join(recipesDir, "daily-standup.html"),
+      },
+    ]);
+  });
+
   it("registers stable capability list and invoke channels", async () => {
     const { registerIpcHandlers } = await import("../src/main/ipc");
     const agentRuntime = {
