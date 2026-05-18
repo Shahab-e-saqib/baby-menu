@@ -220,5 +220,6 @@ describe("agent runtime defaults", () => {
     expect(prompt).toContain("server.ts");
     expect(prompt).toContain("Do not add new preload methods");
     expect(prompt).toContain("server action");
+    expect(prompt).toContain("recipes/");
   });
 });

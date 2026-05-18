@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { copyFileSync, mkdirSync, rmSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync, rmSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -26,9 +26,10 @@ function resolveDevExtensionsDir(rootDir, env) {
   return configured ? resolveInsideRoot(rootDir, configured) : join(rootDir, "extensions-dev");
 }
 
-function prepareDevExtensions({ rootDir, devExtensionsDir, mkdirSyncFn, copyFileSyncFn }) {
+function prepareDevExtensions({ rootDir, devExtensionsDir, mkdirSyncFn, copyFileSyncFn, cpSyncFn }) {
   mkdirSyncFn(devExtensionsDir, { recursive: true });
   copyFileSyncFn(join(rootDir, "extensions", "AGENTS.md"), join(devExtensionsDir, "AGENTS.md"));
+  cpSyncFn(join(rootDir, "extensions", "recipes"), join(devExtensionsDir, "recipes"), { recursive: true });
 }
 
 export function runDev({
@@ -38,6 +39,7 @@ export function runDev({
   spawnSync: spawnSyncFn = spawnSync,
   mkdirSync: mkdirSyncFn = mkdirSync,
   copyFileSync: copyFileSyncFn = copyFileSync,
+  cpSync: cpSyncFn = cpSync,
 } = {}) {
   if (env[ACTIVE_ENV] === "1") {
     return commandStatus(spawnSyncFn("pnpm", ["exec", "electron-vite", "dev"], { cwd, env, stdio: "inherit" }));
@@ -45,7 +47,7 @@ export function runDev({
 
   const rootDir = gitRoot(cwd, execFileSyncFn);
   const devExtensionsDir = resolveDevExtensionsDir(rootDir, env);
-  prepareDevExtensions({ rootDir, devExtensionsDir, mkdirSyncFn, copyFileSyncFn });
+  prepareDevExtensions({ rootDir, devExtensionsDir, mkdirSyncFn, copyFileSyncFn, cpSyncFn });
 
   return commandStatus(
     spawnSyncFn("pnpm", ["exec", "electron-vite", "dev"], {
@@ -67,6 +69,7 @@ export function resetDevWorkspace({
   spawnSync: spawnSyncFn = spawnSync,
   mkdirSync: mkdirSyncFn = mkdirSync,
   copyFileSync: copyFileSyncFn = copyFileSync,
+  cpSync: cpSyncFn = cpSync,
   rmSync: rmSyncFn = rmSync,
 } = {}) {
   const rootDir = gitRoot(cwd, execFileSyncFn);
@@ -80,6 +83,7 @@ export function resetDevWorkspace({
     spawnSync: spawnSyncFn,
     mkdirSync: mkdirSyncFn,
     copyFileSync: copyFileSyncFn,
+    cpSync: cpSyncFn,
   });
 }
 

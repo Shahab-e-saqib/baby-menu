@@ -29,7 +29,7 @@ Key files referenced (paths in that repo):
 - `src/renderer/App.tsx`, `src/renderer/agent/AgentChat.tsx`, `src/renderer/menu/MenuSurface.tsx`, `src/renderer/menu/WidgetHost.tsx` — the components being redesigned here.
 - `src/shared/contracts.ts` — `BabyMenuWidget`, `RefreshableBabyMenuWidget`, `GitSessionSnapshot`, `AgentChatResult` — the data contracts our redesign remains compatible with.
 - `extensions/hello-world/widget.tsx` — the first-run greeting widget and starter example of widget shape.
-- `recipes/*.html` — daisyUI/Tailwind "wireframe" recipe docs. Note: recipes use a separate visual system and should not bleed into popover designs.
+- `extensions/recipes/*.html` — daisyUI/Tailwind "wireframe" recipe docs. Note: recipes use a separate visual system and should not bleed into popover designs.
 
 > Reader: if you have access to the repo above, browsing it directly will give you a much better grounding than this document can. Read `AGENTS.md` first.
 

@@ -217,6 +217,7 @@ export function buildBabyMenuAgentPrompt(prompt: string): string {
 You are editing the baby-menu repository in dev mode.
 Prefer small, test-driven changes in your current extension workspace.
 Build self-contained extensions under <extension-id>/ inside your current extension workspace so they can be shared as a directory behind the stable window.babyMenu bridge.
+For recipe-backed widgets, read the matching self-contained spec from recipes/ before editing.
 Do not modify files outside your current extension workspace unless the user explicitly asks.
 Renderer widgets should call privileged work with window.babyMenu.capabilities.invoke(extensionId, action, input).
 Extension server actions live in server.ts files and export an actions object.
