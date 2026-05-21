@@ -7,6 +7,7 @@ const trayInstance = {
 };
 
 const electronApp = {
+  commandLine: { appendSwitch: vi.fn() },
   dock: { hide: vi.fn() },
   getPath: vi.fn((name: string) => (name === "home" ? "/home/test-user" : "/tmp")),
   getLoginItemSettings: vi.fn(() => ({ openAtLogin: false })),
@@ -86,11 +87,28 @@ vi.mock("../src/shared/paths", () => ({
 }));
 
 describe("startBabyMenuApp", () => {
+  const originalPlatform = process.platform;
+
   beforeEach(() => {
     vi.clearAllMocks();
     electronApp.isPackaged = false;
     browserWindowInstance.isDestroyed.mockReturnValue(false);
     browserWindowInstance.isVisible.mockReturnValue(false);
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      value: originalPlatform,
+    });
+  });
+
+  it("disables Chromium keychain prompts before app startup on macOS", async () => {
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      value: "darwin",
+    });
+
+    await import("../src/main/app");
+
+    expect(electronApp.commandLine.appendSwitch).toHaveBeenCalledWith("use-mock-keychain");
   });
 
   it("retains the tray object for the app lifetime", async () => {
