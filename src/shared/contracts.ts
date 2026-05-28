@@ -100,6 +100,10 @@ export type BabyMenuApi = {
     get: () => Promise<BabyMenuSettings>;
     setOpenAtLogin: (openAtLogin: boolean) => Promise<BabyMenuSettings>;
   };
+  app: {
+    /** Fully quits the Electron app from the popover shell. */
+    quit: () => Promise<{ ok: boolean }>;
+  };
 };
 
 declare global {
