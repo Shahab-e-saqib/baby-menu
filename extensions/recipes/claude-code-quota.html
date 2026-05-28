@@ -70,7 +70,7 @@
 
       <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
         <h2>OAuth Usage API Details</h2>
-        <p>Credential locations to check from the main process only:</p>
+        <p>Credential locations to check from <code>claude-code-quota/server.ts</code> only:</p>
         <ul>
           <li><code>~/.claude/.credentials.json</code></li>
           <li>Future app-local credential cache under Electron user data, not committed to the repo.</li>
@@ -110,7 +110,7 @@ anthropic-beta: oauth-2025-04-20</code></pre>
 
       <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
         <h2>Claude CLI Probe Details</h2>
-        <p>Run privileged CLI work in the Electron main process. Do not expose Node APIs to the renderer.</p>
+        <p>Run privileged CLI work in <code>claude-code-quota/server.ts</code> behind <code>window.babyMenu.capabilities.invoke</code>. Do not expose Node APIs to the renderer.</p>
         <p>Command strategy:</p>
         <ul>
           <li>Check whether <code>claude</code> exists on <code>PATH</code>.</li>
@@ -153,16 +153,19 @@ Cookie: sessionKey=&lt;value&gt;</code></pre>
 
       <section class="card border border-base-300 bg-base-100 shadow-sm p-6">
         <h2>Implementation Contract</h2>
-        <p>Create or edit these files:</p>
+        <p>Create or edit these extension files:</p>
         <ul>
-          <li><code>src/main/claude-quota.ts</code> for main-process data fetching and parsing.</li>
-          <li><code>src/main/ipc.ts</code> to expose <code>baby-menu:quota:claude</code>.</li>
-          <li><code>src/preload/index.ts</code> to expose <code>window.babyMenu.quota.claude()</code>.</li>
-          <li><code>src/renderer/widgets/claude-code-quota-widget.tsx</code> for the renderer widget.</li>
-          <li><code>src/renderer/menu/WidgetHost.tsx</code> or a widget registry file to register the widget.</li>
+          <li><code>claude-code-quota/server.ts</code> for privileged token, CLI, network, timeout, and parser work.</li>
+          <li><code>claude-code-quota/widget.tsx</code> for a <code>RefreshableBabyMenuWidget</code>, using <code>@babymenu/ui</code>.</li>
+          <li>The widget should call <code>window.babyMenu.capabilities.invoke("claude-code-quota", "getQuota", input)</code>.</li>
+          <li>Put quota reload logic in the widget's exported <code>refresh</code> method and set <code>refreshIntervalMs</code> to 5 minutes; <code>WidgetHost</code> owns timer and manual refresh calls.</li>
+          <li>Do not add preload methods, per-widget IPC channels, core renderer widgets, or <code>WidgetHost</code> registration; Baby Menu discovers extension widgets automatically.</li>
+        </ul>
+        <p>Add repo-level tests:</p>
+        <ul>
           <li><code>tests/claude-quota.test.ts</code> for parser and fallback tests.</li>
         </ul>
-        <p>IPC response shape:</p>
+        <p>Server action response shape:</p>
         <pre class="mockup-code p-4 overflow-auto"><code>type QuotaResult&lt;T&gt; =
   | { ok: true; data: T }
   | { ok: false; error: string; sourceTried: string[]; mock?: T };</code></pre>

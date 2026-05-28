@@ -13,25 +13,25 @@ If the user invokes this skill without any other guidance, ask them what they wa
 ## What's here
 
 - `README.md` — full brand brief: product context, content fundamentals, visual foundations, iconography.
-- `colors_and_type.css` — token source of truth. Always import this. Never invent new tokens; if you need a color or size that isn't in this file, add it here first.
+- `colors_and_type.css` — prototype and app-shell token reference. For production widgets, use `@babymenu/ui` and the live Tailwind tokens in `src/ui/theme.css`; never invent new tokens without updating the relevant source first.
 - `preview/` — small HTML cards that document each token / component visually.
 - `ui_kits/popup-menu/` — the canonical UI kit: a clickable recreation of the redesigned tray popover with `MenuBar`, `Composer`, `RunStrip`, `SessionBar`, `WidgetHost` and three sample widgets.
 
 ## The direction in one paragraph
 
-**Monochrome Lab.** Near-black canvas (`#0B0B0C`), white type at varying alpha, JetBrains Mono everywhere, one mint signal color (`#6AE3B6`). The popover reads as a calm command-line surface. No gradients, no emoji, no second accent. Status is a 5px glowing dot plus one tracked-caps word.
+**Monochrome Lab.** Near-black canvas (`#0B0B0C`), white type at varying alpha, JetBrains Mono everywhere, one mint signal color (`#6AE3B6`). The popover reads as a calm command-line surface. No gradients, no emoji, no second accent. Status is a small glowing dot plus one tracked-caps word, 6px in shared components and 8px in RunStrip/SessionBar controls.
 
 ## Hard rules
 
 1. Baby Menu is a **macOS tray popover**, 360px wide, dynamic-height. Never design for a full browser window.
 2. **The agent's work is not a chat.** No transcript, no bubbles, no history. Use the `RunStrip` pattern: one live affordance (pulsing mint dot + current step + timer), replaced by a `SessionBar` when done.
-3. **No mode toggle.** The composer is one slim row pinned to the bottom of the popover, always visible. It auto-grows to a second line when the user types more.
+3. **No build-mode toggle.** On the main idle surface, the composer is one slim row pinned to the bottom of the popover. It auto-grows to a second line when the user types more. During an active agent run, `RunStrip` replaces the composer; the settings view also replaces it while open.
 4. **Never expose git, files, or commits to the user.** The SessionBar reads "Added a CPU temperature widget", not "3 files committed · b8d3a2c". Buttons are **Keep** and **Undo**, not Save and Rollback.
 5. **No emoji as UI.** No gradients. Status is color + word (rarely needed — usually only on the SessionBar's leading dot).
-6. **Type and ASCII glyphs are the iconography.** `›` `⟳` `+` `·` `↵` `⌘` `●`. Lucide @ 16px / 1.5 stroke is the fallback if an ASCII glyph won't carry the meaning.
+6. **Type and ASCII glyphs are the iconography.** `›` `+` `·` `↵` `⌘` `●`. Lucide is used when ASCII won't carry the meaning, including `RefreshCw` for widget refresh; use 14px in compact controls and 16px in roomier controls.
 7. **JetBrains Mono everywhere** inside the popover surface. Inter Tight only for long prose outside the surface.
 8. **Mint is the only signal color** and is used ONLY as a dot, glow, single word, or 1px progress fill — never as a button fill, never as a background of more than 10% alpha.
-9. Buttons are pill-shaped. Primary is **inverse white** (`--ink-100` on near-black). Default is transparent with a 1px hairline border. Destructive is coral outline.
+9. Production `@babymenu/ui` buttons use compact `rounded-sm` corners. Primary is **inverse white** (`--ink-100` on near-black). Default is transparent with a 1px hairline border. Destructive is coral outline. Reserve pill buttons for prototype/app-shell affordances where the design brief calls for them.
 
 ## Reference repo
 

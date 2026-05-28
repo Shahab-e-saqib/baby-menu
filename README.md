@@ -19,7 +19,7 @@ You ask for a feature in plain English, the agent writes an extension and it hot
 
 - **Personal self-evolving software** - this is a glimpse into a future where every piece of software is personal and self-evolving towards your exact needs.
 - **Ask, don't configure** - tweak the menu using natural language, not configuration.
-- **Worry-free** - every agent turn can be kept or rolled back.
+- **Worry-free** - every agent turn can be kept or undone.
 
 ## Quick Start
 
@@ -30,16 +30,16 @@ brew install --cask kunchenguid/tap/baby-menu
 open -a "Baby Menu"
 ```
 
-Click the tray icon, then ask for a widget in the popover chat such as:
+Click the tray icon, then ask for a widget in the composer such as:
 
 ```text
 add a CPU temp widget that shows current temperature and fan status
 ```
 
-Baby Menu writes the extension under `~/.baby-menu/extensions`, mounts the widget live, and shows Save / Rollback controls for the turn.
-Use Save to keep it, or Rollback to throw it away.
+Baby Menu writes the extension under `~/.baby-menu/extensions`, mounts the widget live, and shows Keep / Undo controls for the turn.
+Use Keep to keep it, or Undo to throw it away.
 The packaged app opens at login by default.
-Use the `login on/off` toggle in the popover header to turn that off or back on.
+Open settings from the popover header to turn `open at login` off or back on.
 
 ## Install Details
 
@@ -72,7 +72,7 @@ Requires Node `>=22.12` and `pnpm@11.1.1` (declared in `packageManager`).
 ```
    ┌─────────────────────┐
    │  macOS tray popover │   (React renderer, 360px wide)
-   │     + AgentChat     │
+   │ + Menu / Settings   │
    └──────────┬──────────┘
               │  send()
               ▼
@@ -81,7 +81,7 @@ Requires Node `>=22.12` and `pnpm@11.1.1` (declared in `packageManager`).
    │   wraps acpx/runtime │       │   git or snapshot    │
    └──────────┬──────────┘       │   by runtime mode    │
               │                   └──────────┬───────────┘
-              │ edits files                  │ Save / Rollback
+              │ edits files                  │ save / rollback
               ▼                              ▼
    ┌─────────────────────┐       ┌──────────────────────┐
    │ active extensions/  │       │   save snapshot or   │
@@ -102,7 +102,7 @@ Requires Node `>=22.12` and `pnpm@11.1.1` (declared in `packageManager`).
   The agent reads the matching recipe before implementing.
 - **Extension server actions** - privileged work (shell, network, credentials) lives in `<extension-id>/server.ts` and is invoked from widgets via `window.babyMenu.capabilities.invoke(extensionId, action, input)`.
   No per-widget IPC channels.
-- **Runtime-specific extension roots** - `pnpm dev` edits gitignored `extensions-dev/`; packaged builds seed and edit `~/.baby-menu/extensions` with snapshot Save/Rollback.
+- **Runtime-specific extension roots** - `pnpm dev` edits gitignored `extensions-dev/`; packaged builds seed and edit `~/.baby-menu/extensions` with internal snapshot save/rollback.
   Tracked `extensions/` remain the source templates for dev and packaged extension workspaces.
 
 ## Layout
@@ -111,7 +111,8 @@ Requires Node `>=22.12` and `pnpm@11.1.1` (declared in `packageManager`).
 | --------------------------- | ----------------------------------------------------------- |
 | `src/main/`                 | Electron lifecycle, tray, popover, IPC, git, agent runtime  |
 | `src/preload/index.ts`      | The stable `window.babyMenu` bridge                         |
-| `src/renderer/`             | React UI: `AgentChat` + `WidgetHost`                        |
+| `src/renderer/`             | React UI: `AgentChat`, `WidgetHost`, and settings            |
+| `src/ui/`                   | Shared `@babymenu/ui` design system for shell and widgets    |
 | `src/shared/contracts.ts`   | `BabyMenuApi`, `BabyMenuWidget`, `GitSessionSnapshot`, etc. |
 | `extensions/<id>/`          | Tracked extensions (`widget.tsx`, `server.ts`)              |
 | `extensions/recipes/*.html` | Self-contained widget specs the agent reads                 |
@@ -126,7 +127,7 @@ Requires Node `>=22.12` and `pnpm@11.1.1` (declared in `packageManager`).
 | -------------------------------- | ------------------------------------------------------------ |
 | `BABY_MENU_KEEP_POPOVER_OPEN=1`  | Disables blur-to-hide so devtools / external windows stay up |
 | `BABY_MENU_AGENT=<name>`         | Selects the ACP agent (e2e tests use `acpx-mock`)            |
-| `BABY_MENU_EXTENSIONS_DIR=<dir>` | Overrides the active extension workspace in source/dev runs  |
+| `BABY_MENU_EXTENSIONS_DIR=<dir>` | Overrides the active extension workspace in source/dev runs. Dev Tailwind scans only `extensions/` and `extensions-dev/`, so overrides outside those paths need matching `@source` coverage for widget utilities. |
 
 ## Development
 
