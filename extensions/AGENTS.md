@@ -11,13 +11,13 @@ Use lowercase kebab-case ids such as `codex-quota`.
 
 Common files are:
 
-- `widget.tsx` for the renderer widget surface.
+- `widget.tsx` for renderer widget and settings-section surfaces.
 - `server.ts` for privileged server actions and background tasks.
 - Additional local helper files used only by this extension.
 - Optional notes that make the extension understandable and shareable.
 
 Packaged Baby Menu compiles extension modules before loading them.
-Keep imports package-safe: widgets may import `react`, `react/jsx-runtime`, `react/jsx-dev-runtime`, the design system `@babymenu/ui`, and local helper files only.
+Keep imports package-safe: widget modules may import `react`, `react/jsx-runtime`, `react/jsx-dev-runtime`, the design system `@babymenu/ui`, and local helper files only.
 Server modules may import Node built-ins such as `node:fs` plus local helper files only.
 Do not add arbitrary npm package imports to extension code unless the host compiler is updated to support them.
 
@@ -69,7 +69,7 @@ Available components:
 - Disclosure: `Tabs` with `TabsList`, `TabsTrigger`, `TabsContent`; `Dialog` with `DialogTrigger`, `DialogContent`, `DialogTitle`, `DialogDescription`, `DialogBody`, `DialogFooter`; `DropdownMenu` with `DropdownMenuTrigger`, `DropdownMenuContent`, `DropdownMenuItem`; and `Tooltip`.
 - `cn(...)` merges Tailwind class strings safely.
 
-`@babymenu/ui` is the only extra import a widget may add beyond `react` and local files.
+`@babymenu/ui` is the only extra import a widget module may add beyond `react` and local files.
 Overlays such as `Dialog`, `Select`, and `Tooltip` are already sized to fit the tray popover; do not reposition them.
 
 Common API patterns:
@@ -229,6 +229,34 @@ Onboarding widget headlines should usually use `text-md` or `text-lg`.
 Starter empty states may use `text-2xl` or `text-3xl` for a single display line because the menu is otherwise empty.
 Use readable body copy at `text-base`, and keep examples or hints small but legible.
 Example prompts should be complete pasteable user asks, not one-word labels.
+
+## Settings Sections
+
+An extension may contribute its own section to the Baby Menu settings page so the user can configure it (account, thresholds, units, which calendar, refresh cadence) without editing code.
+Export a `BabyMenuSettingsSection` from `widget.tsx` alongside the widget - it is discovered from the same module, so no new file convention and no preload changes are needed.
+
+```tsx
+import { Button, Field, Input, Switch } from "@babymenu/ui";
+
+export const calendarSettings = {
+  extensionId: "calendar", // must match the extension directory id; used as the section key and sort order
+  title: "CALENDAR",        // terse tracked-caps label, like a widget title
+  render: () => (
+    <div className="flex flex-col gap-3">
+      <Field label="account">
+        <Input placeholder="you@example.com" />
+      </Field>
+      <Switch aria-label="show all-day events" />
+    </div>
+  ),
+};
+```
+
+The section is renderer-only, exactly like a widget: the host draws the section frame (title, dividers, spacing) and you own only the body.
+Build the form from `@babymenu/ui` (`Field`, `Input`, `Switch`, `Select`, `Button`) so it matches the app shell for free.
+Read and write configuration through the existing bridges - `window.babyMenu.db` for normal values - using an extension-prefixed table (for example `calendar_settings`); there is no separate settings store.
+Do not put tokens or secrets in `db`; keep credential work in `server.ts`.
+The running widget picks up changed settings by re-reading on its next view refresh, so persist settings to `db` and read them in the widget rather than wiring a custom change event.
 
 ## Server Actions
 
