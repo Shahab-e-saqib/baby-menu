@@ -1,8 +1,16 @@
 import { app as electronApp, ipcMain } from "electron";
 import { pathToFileURL } from "node:url";
-import type { AgentChatResult, BabyMenuSettings, GitActionResult, RecipeMetadata } from "../shared/contracts";
+import type {
+  AgentChatResult,
+  BabyMenuSettings,
+  GitActionResult,
+  PopoverVisibilityState,
+  RecipeMetadata,
+  SqlParams,
+} from "../shared/contracts";
 import { getExtensionsDir, getRecipesDir } from "../shared/paths";
 import { BabyMenuAgentRuntime, type BabyMenuAgentRuntimeSendOptions } from "./agent-runtime";
+import { createExtensionDatabase, type ExtensionDatabase } from "./extension-database";
 import { loadRecipes } from "./recipe-loader";
 import { createServerActionRegistry, type ServerActionRegistry } from "./server-action-registry";
 import { createWidgetModuleRegistry, type WidgetModuleRegistry } from "./widget-module-registry";
@@ -13,6 +21,7 @@ type AgentRuntimeFacade = Pick<BabyMenuAgentRuntime, "save" | "rollback"> & {
 
 type PopoverController = {
   setContentHeight: (height: number) => void | Promise<void>;
+  getVisibility: () => PopoverVisibilityState | Promise<PopoverVisibilityState>;
 };
 
 type SettingsController = {
@@ -26,6 +35,7 @@ type AppController = {
 
 type IpcRuntimeOptions = {
   recipesDir?: string;
+  database?: ExtensionDatabase;
 };
 
 export function registerIpcHandlers(
@@ -33,7 +43,7 @@ export function registerIpcHandlers(
   agentRuntime: AgentRuntimeFacade = new BabyMenuAgentRuntime(rootDir),
   serverActions: ServerActionRegistry = createServerActionRegistry({ rootDir, actionRoots: [getExtensionsDir(rootDir)] }),
   widgetModules: WidgetModuleRegistry = createWidgetModuleRegistry(rootDir),
-  popover: PopoverController = { setContentHeight: () => undefined },
+  popover: PopoverController = { setContentHeight: () => undefined, getVisibility: () => ({ visible: false }) },
   settings: SettingsController = {
     get: () => ({ openAtLogin: false }),
     setOpenAtLogin: (openAtLogin) => ({ openAtLogin }),
@@ -42,6 +52,7 @@ export function registerIpcHandlers(
   runtimeOptions: IpcRuntimeOptions = {},
 ) {
   const recipesDir = runtimeOptions.recipesDir ?? getRecipesDir(rootDir);
+  const database = runtimeOptions.database ?? createExtensionDatabase(":memory:");
 
   ipcMain.handle("baby-menu:recipes:list", async (): Promise<RecipeMetadata[]> => {
     return loadRecipes(pathToFileURL(`${recipesDir}/`));
@@ -69,6 +80,22 @@ export function registerIpcHandlers(
     return serverActions.invoke(extensionId, action, input);
   });
 
+  ipcMain.handle("baby-menu:db:query", async (_event, sql: string, params?: SqlParams) => {
+    return database.query(sql, params);
+  });
+
+  ipcMain.handle("baby-menu:db:get", async (_event, sql: string, params?: SqlParams) => {
+    return database.get(sql, params);
+  });
+
+  ipcMain.handle("baby-menu:db:run", async (_event, sql: string, params?: SqlParams) => {
+    return database.run(sql, params);
+  });
+
+  ipcMain.handle("baby-menu:db:exec", async (_event, sql: string) => {
+    database.exec(sql);
+  });
+
   ipcMain.handle("baby-menu:widgets:list", async () => {
     return widgetModules.list();
   });
@@ -76,6 +103,10 @@ export function registerIpcHandlers(
   ipcMain.handle("baby-menu:popover:set-content-height", async (_event, height: number) => {
     await popover.setContentHeight(height);
     return { ok: true };
+  });
+
+  ipcMain.handle("baby-menu:popover:get-visibility", async () => {
+    return popover.getVisibility();
   });
 
   ipcMain.handle("baby-menu:settings:get", async () => {

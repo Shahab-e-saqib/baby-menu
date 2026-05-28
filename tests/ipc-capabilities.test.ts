@@ -124,6 +124,25 @@ describe("capabilities IPC", () => {
     });
   });
 
+  it("registers SQL database channels backed by a shared store", async () => {
+    const { registerIpcHandlers } = await import("../src/main/ipc");
+    const { createExtensionDatabase } = await import("../src/main/extension-database");
+    const agentRuntime = { send: vi.fn(), save: vi.fn(), rollback: vi.fn() };
+    const database = createExtensionDatabase(":memory:");
+
+    registerIpcHandlers("/repo", agentRuntime, undefined, undefined, undefined, undefined, undefined, { database });
+
+    await handlers.get("baby-menu:db:exec")?.({}, "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)");
+    await expect(handlers.get("baby-menu:db:run")?.({}, "INSERT INTO notes (body) VALUES (?)", ["hi"])).resolves.toEqual({
+      changes: 1,
+      lastInsertRowid: 1,
+    });
+    await expect(handlers.get("baby-menu:db:query")?.({}, "SELECT body FROM notes")).resolves.toEqual([{ body: "hi" }]);
+    await expect(handlers.get("baby-menu:db:get")?.({}, "SELECT body FROM notes WHERE id = ?", [1])).resolves.toEqual({
+      body: "hi",
+    });
+  });
+
   it("registers a widget module discovery channel", async () => {
     const { registerIpcHandlers } = await import("../src/main/ipc");
     const agentRuntime = {
@@ -143,17 +162,23 @@ describe("capabilities IPC", () => {
     expect(widgetModules.list).toHaveBeenCalledOnce();
   });
 
-  it("registers a popover content-height channel", async () => {
+  it("registers popover state channels", async () => {
     const { registerIpcHandlers } = await import("../src/main/ipc");
     const agentRuntime = {
       send: vi.fn(),
       save: vi.fn(),
       rollback: vi.fn(),
     };
+    const popover = {
+      setContentHeight: vi.fn(),
+      getVisibility: vi.fn(() => ({ visible: false })),
+    };
 
-    registerIpcHandlers("/repo", agentRuntime);
+    registerIpcHandlers("/repo", agentRuntime, undefined, undefined, popover);
 
     await expect(handlers.get("baby-menu:popover:set-content-height")?.({}, 333)).resolves.toEqual({ ok: true });
+    expect(popover.setContentHeight).toHaveBeenCalledWith(333);
+    await expect(handlers.get("baby-menu:popover:get-visibility")?.({})).resolves.toEqual({ visible: false });
   });
 
   it("registers an app quit channel", async () => {
