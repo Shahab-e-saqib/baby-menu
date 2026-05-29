@@ -32,6 +32,7 @@ Follow these rules:
 - `BABY_MENU_KEEP_POPOVER_OPEN=1` disables the blur-to-hide behavior so the popover stays open while devtools / external windows have focus.
 - `BABY_MENU_AGENT=<agent-name>` overrides agent auto-detection when no saved Settings choice exists. E2E tests pass `acpx-mock` via `registryOverrides`.
 - `BABY_MENU_AGENT_TIMEOUT_MS=<ms>` overrides the embedded-agent request timeout.
+- `BABY_MENU_TELEMETRY=0` (or `false` / `off`) disables packaged-release telemetry; `BABY_MENU_UMAMI_HOST` and `BABY_MENU_UMAMI_WEBSITE_ID` override the self-hosted Umami target for telemetry testing.
 - `process.env.VITEST` is checked in `src/main/app.ts` so importing the main entry from tests does not auto-start the Electron app.
 
 ## Architecture
@@ -78,6 +79,7 @@ The extension-facing slice of that contract is a generated public surface, treat
 - `background-task-scheduler.ts` - runs discovered extension background tasks on host-owned timers, hot-reloads changed tasks, and enforces the 60-second minimum interval.
 - `extension-database.ts` - owns the shared local SQLite database exposed to extension server actions, background tasks, and widgets through the bridge.
 - `notifier.ts` - backs `context.notify` for server actions and background tasks with native notifications.
+- `telemetry.ts` - anonymous, best-effort usage telemetry to a self-hosted Umami instance. One fire-and-forget POST per event to `/api/send`, no user/device id and no prompt or file contents, every network error swallowed. The Umami host and website id are injected at build time by the `define` block in `electron.vite.config.ts` (CI release sets `BABY_MENU_UMAMI_HOST` inline and reads `BABY_MENU_UMAMI_WEBSITE_ID` from the `vars.*` Actions variable - not a secret, since the website id is sent in plaintext in every payload and baked into the shipped bundle); when unset (source/dev/test) the build website id is empty and the client is a no-op, so the app never phones home outside packaged release builds. `app.ts` initializes the default client and fires `app_start` and `popover_open`; `agent-runtime.ts` fires `agent_turn` (status `success` / `error` / `timeout` / `blocked_dirty`) and `agent_switch`. Set `BABY_MENU_TELEMETRY=0` (or `false`/`off`) to opt out, or override the target at runtime with `BABY_MENU_UMAMI_HOST` / `BABY_MENU_UMAMI_WEBSITE_ID`.
 
 `src/adapters/` contains the bundled clean-room ACP adapters for built-in agents.
 Claude Code and Codex are exposed to `acpx/runtime` as local adapter processes, while the adapters drive the real authenticated `claude` and `codex` CLIs in the active extension workspace.
