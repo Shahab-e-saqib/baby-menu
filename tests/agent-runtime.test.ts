@@ -69,13 +69,13 @@ describe("agent runtime defaults", () => {
     ).toBe("claude");
   });
 
-  it("uses Pi when Claude is unavailable and npx is available", () => {
+  it("uses Codex when Claude is unavailable", () => {
     expect(
       resolveDefaultAgentName({
         env: {},
         commandExists: available(["codex", "npx"]),
       }),
-    ).toBe("pi");
+    ).toBe("codex");
   });
 
   it("uses Codex when it is the only preferred local agent available", () => {
@@ -233,6 +233,15 @@ describe("agent runtime defaults", () => {
     expect(prompt).toContain("Do not add new preload methods");
     expect(prompt).toContain("server action");
     expect(prompt).toContain("recipes/");
+  });
+
+  it("aligns runtime guidance with extension-only verification", () => {
+    const prompt = buildBabyMenuAgentPrompt("Build a Codex quota widget");
+
+    expect(prompt).not.toContain("test-driven");
+    expect(prompt).not.toContain("Run relevant tests");
+    expect(prompt).toContain("Do not write test files");
+    expect(prompt).toContain("do not write README or other documentation files");
   });
 
   it("rejects a second send while an agent turn is already running", async () => {
