@@ -1,11 +1,37 @@
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { setTimeout as delay } from "node:timers/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { existsSync, watch } from "node:fs";
 import { describe, expect, it, afterEach } from "vitest";
 import { ClaudeDriver } from "../src/adapters/claude/driver";
 import type * as schema from "@agentclientprotocol/sdk";
 
 const FAKE = join(__dirname, "fixtures", "fake-clis", "fake-claude.mjs");
+
+function waitForFile(path: string): Promise<void> {
+  if (existsSync(path)) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const watcher = watch(dirname(path), (_event, filename) => {
+      if (filename === basename(path) && existsSync(path)) {
+        watcher.close();
+        resolve();
+      }
+    });
+    watcher.on("error", (error) => {
+      watcher.close();
+      reject(error);
+    });
+  });
+}
+
+async function slowCancelGate(): Promise<{ prompt: string; terminated: Promise<void>; release: () => Promise<void> }> {
+  // The fake CLI reports SIGTERM through one file and waits on the other before
+  // exiting, which lets the tests assert ordering without wall-clock races.
+  const dir = await mkdtemp(join(tmpdir(), "claude-driver-"));
+  const sentinel = join(dir, "release-exit");
+  const terminated = join(dir, "observed-sigterm");
+  return { prompt: `SLOW_CANCEL:${sentinel}:${terminated}`, terminated: waitForFile(terminated), release: () => writeFile(sentinel, "") };
+}
 
 describe("ClaudeDriver (against a fake claude CLI)", () => {
   let driver: ClaudeDriver | null = null;
@@ -64,35 +90,46 @@ describe("ClaudeDriver (against a fake claude CLI)", () => {
   it("waits for the child process to exit before resolving cancellation", async () => {
     const d = makeDriver();
     await d.start(tmpdir());
+    const gate = await slowCancelGate();
     const ac = new AbortController();
     let ready!: () => void;
     const readyPromise = new Promise<void>((resolve) => {
       ready = resolve;
     });
     const prompt = d.prompt(
-      "SLOW_CANCEL",
+      gate.prompt,
       (u) => {
         if (u.sessionUpdate === "agent_message_chunk") ready();
       },
       ac.signal,
     );
     await readyPromise;
+    let released = false;
+    let settled = false;
+    const settlement = prompt.then((result) => {
+      settled = true;
+      return { result, released };
+    });
     ac.abort();
+    await gate.terminated;
+    await Promise.resolve();
+    expect(settled).toBe(false);
 
-    const early = await Promise.race([prompt, delay(20).then(() => "still-running")]);
-    expect(early).toBe("still-running");
-    expect(await prompt).toBe("cancelled");
+    released = true;
+    await gate.release();
+    expect(await settlement).toEqual({ result: "cancelled", released: true });
   });
 
   it("waits for the child process to exit before resolving disposal", async () => {
     const d = makeDriver();
     await d.start(tmpdir());
+    const gate = await slowCancelGate();
     let ready!: () => void;
     const readyPromise = new Promise<void>((resolve) => {
       ready = resolve;
     });
     const prompt = d.prompt(
-      "SLOW_CANCEL",
+      gate.prompt,
       (u) => {
         if (u.sessionUpdate === "agent_message_chunk") ready();
       },
@@ -101,9 +138,20 @@ describe("ClaudeDriver (against a fake claude CLI)", () => {
     await readyPromise;
 
     const disposal = d.dispose();
-    const early = await Promise.race([disposal.then(() => "disposed"), delay(20).then(() => "still-running")]);
-    expect(early).toBe("still-running");
-    await disposal;
+    let released = false;
+    let disposed = false;
+    const settlement = disposal.then(() => {
+      disposed = true;
+      return { released };
+    });
+    await gate.terminated;
+    await Promise.resolve();
+    expect(disposed).toBe(false);
+
+    released = true;
+    await gate.release();
+    expect(await settlement).toEqual({ released: true });
+    expect(disposed).toBe(true);
     expect(await prompt).toBe("cancelled");
   });
 
@@ -123,9 +171,11 @@ describe("ClaudeDriver (against a fake claude CLI)", () => {
     );
     await readyPromise;
 
-    const disposal = d.dispose();
-    const result = await Promise.race([disposal.then(() => "disposed"), delay(1500).then(() => "still-running")]);
-    expect(result).toBe("disposed");
+    // The child swallows SIGTERM, so disposal can only resolve once the driver's
+    // SIGKILL after TERMINATION_GRACE_MS terminates it. Awaiting disposal is a
+    // deterministic proof of force-kill: if it never fired, this would hang and
+    // fail via the test timeout instead of flaking on a race window.
+    await d.dispose();
     expect(await prompt).toBe("cancelled");
   });
 });

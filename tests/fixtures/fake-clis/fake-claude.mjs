@@ -4,6 +4,10 @@
 // runs one process per turn). Echoes whether it was resumed so the driver's
 // session threading can be asserted. Kept in sync with
 // tests/fixtures/protocols/claude/*.jsonl.
+// Special SLOW_* prompts are test controls for cancellation and child-process
+// termination behavior rather than captured protocol fixtures.
+import { existsSync, writeFileSync } from "node:fs";
+
 const emit = (obj) => process.stdout.write(JSON.stringify(obj) + "\n");
 
 const argv = process.argv.slice(2);
@@ -13,17 +17,36 @@ const isResume = resumeIdx >= 0;
 const prompt = argv[argv.length - 1] ?? "";
 
 if (prompt.includes("SLOW_CANCEL")) {
+  // Register the SIGTERM handler BEFORE announcing readiness. The parent reads
+  // "ready" the instant the bytes hit the pipe and may fire SIGTERM while this
+  // process is still mid-script; registering after the emit left a window where
+  // SIGTERM hit Node's default action (immediate termination) and the child
+  // died early. Once terminated, exit only when the test creates the sentinel
+  // release file encoded in the prompt, so the driver's disposal
+  // and cancellation promises stay pending until the test releases us - no
+  // wall-clock race decides the outcome.
+  const [, releaseFile = null, terminatedFile = null] = prompt.match(/SLOW_CANCEL:(\S+):(\S+)/) ?? [];
+  let terminating = false;
+  process.on("SIGTERM", () => {
+    terminating = true;
+    if (terminatedFile) writeFileSync(terminatedFile, "");
+  });
   emit({ type: "system", subtype: "init", session_id: "fake-session", model: "fake", cwd: process.cwd() });
   emit({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "ready" }] } });
-  process.on("SIGTERM", () => setTimeout(() => process.exit(0), 100));
-  setInterval(() => {}, 1000);
+  setInterval(() => {
+    if (terminating && (!releaseFile || existsSync(releaseFile))) process.exit(0);
+  }, 5);
   await new Promise(() => {});
 }
 
 if (prompt.includes("SLOW_FORCE_KILL")) {
+  // Swallow SIGTERM entirely so only the driver's SIGKILL after the termination
+  // grace period can stop us. The test proves force-kill happened simply by
+  // observing that disposal completes at all. Registered before "ready" for the
+  // same reason as SLOW_CANCEL above.
+  process.on("SIGTERM", () => {});
   emit({ type: "system", subtype: "init", session_id: "fake-session", model: "fake", cwd: process.cwd() });
   emit({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "ready" }] } });
-  process.on("SIGTERM", () => setTimeout(() => process.exit(0), 2000));
   setInterval(() => {}, 1000);
   await new Promise(() => {});
 }
