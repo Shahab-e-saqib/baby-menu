@@ -259,7 +259,8 @@ export class BabyMenuAgentRuntime {
   private activeTurn = false;
   private activeTurnInfo: AgentActiveTurn | null = null;
   private agentName: string;
-  private readonly registryOverrides: Record<string, string> | undefined;
+  private registryOverrides: Record<string, string> | undefined;
+  private registryOverridesStale = false;
   private readonly requestTimeoutMs: number;
   private readonly paths: BabyMenuAgentRuntimePaths | undefined;
 
@@ -308,6 +309,18 @@ export class BabyMenuAgentRuntime {
     return this.agentName;
   }
 
+  /**
+   * Replaces the acpx registry overrides used to launch agents.
+   */
+  async setRegistryOverrides(overrides: Record<string, string> | undefined): Promise<void> {
+    this.registryOverrides = overrides && Object.keys(overrides).length > 0 ? overrides : undefined;
+    if (this.agentSwitchDisabledReason) {
+      this.registryOverridesStale = true;
+      return;
+    }
+    await this.closeRuntime("registry-overrides-change", undefined, true);
+  }
+
   get agentSwitchDisabledReason(): string | undefined {
     if (this.activeTurn) return "Agent is running. Wait for it to finish before switching agents.";
     if (this.activeSession?.canSave || this.activeSession?.canRollback) {
@@ -328,15 +341,7 @@ export class BabyMenuAgentRuntime {
     const disabledReason = this.agentSwitchDisabledReason;
     if (disabledReason) throw new Error(disabledReason);
 
-    if (this.runtime && this.handle) {
-      const runtime = this.runtime;
-      const handle = this.handle;
-      await runtime
-        .close({ handle, reason: "agent-switch", discardPersistentState: true })
-        .catch(() => undefined);
-    }
-    this.runtime = null;
-    this.handle = null;
+    await this.closeRuntime("agent-switch", true, true);
     this.activeSession = null;
     this.agentName = next;
   }
@@ -439,25 +444,51 @@ export class BabyMenuAgentRuntime {
   async save(message?: string) {
     if (!this.activeSession) return { ok: false, reason: "No active agent change session" };
     const result = await this.activeSession.save(message);
-    if (result.ok) this.activeSession = null;
+    if (result.ok) {
+      this.activeSession = null;
+      await this.refreshRuntimeAfterRegistryChange();
+    }
     return result;
   }
 
   async rollback() {
     if (!this.activeSession) return { ok: false, reason: "No active agent change session" };
     const result = await this.activeSession.rollback();
-    if (result.ok) this.activeSession = null;
+    if (result.ok) {
+      this.activeSession = null;
+      await this.refreshRuntimeAfterRegistryChange();
+    }
     return result;
   }
 
   async close() {
-    if (!this.runtime || !this.handle) return;
+    await this.closeRuntime("baby-menu-shutdown");
+  }
+
+  private async closeRuntime(reason: string, discardPersistentState?: boolean, ignoreCloseError = false): Promise<void> {
+    if (!this.runtime || !this.handle) {
+      this.runtime = null;
+      this.handle = null;
+      this.registryOverridesStale = false;
+      return;
+    }
 
     const runtime = this.runtime;
     const handle = this.handle;
     this.runtime = null;
     this.handle = null;
-    await runtime.close({ handle, reason: "baby-menu-shutdown" });
+    this.registryOverridesStale = false;
+    const close = runtime.close({ handle, reason, discardPersistentState });
+    if (ignoreCloseError) {
+      await close.catch(() => undefined);
+      return;
+    }
+    await close;
+  }
+
+  private async refreshRuntimeAfterRegistryChange(): Promise<void> {
+    if (!this.registryOverridesStale) return;
+    await this.closeRuntime("registry-overrides-change", undefined, true);
   }
 
   private async ensureAgentRuntimeCwd(): Promise<string> {
