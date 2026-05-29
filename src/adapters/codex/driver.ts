@@ -16,8 +16,9 @@ export type CodexDriverOptions = {
 
 /**
  * Drives `codex exec --json` per turn. The first turn runs `codex exec <prompt>`
- * and captures the `thread.started` id; subsequent turns run
- * `codex exec resume <id> <prompt>` so conversation memory carries over.
+ * with `--color never` and captures the `thread.started` id; subsequent turns
+ * run `codex exec resume <id> <prompt>` without `--color`, because the resume
+ * subcommand rejects that flag, so conversation memory carries over.
  *
  * Each turn is its own short-lived child (exec is one-shot), which keeps us off
  * the `codex app-server` path that starts the computer-use MCP server behind
@@ -57,12 +58,13 @@ export class CodexDriver implements SessionDriver {
       // context comes from the cwd (the workspace) and its AGENTS.md.
       "--ignore-user-config",
       "--ignore-rules",
-      "--color",
-      "never",
     ];
+    // `--color` is valid on `codex exec` but the `resume` subcommand rejects it
+    // (clap exits 2), so it stays off the resume path. Output is `--json`
+    // anyway, so this only suppresses any incidental coloring on the first turn.
     const args = this.threadId
       ? ["exec", "resume", this.threadId, ...common, text]
-      : ["exec", ...common, text];
+      : ["exec", ...common, "--color", "never", text];
 
     logDebug(SCOPE, "spawn", this.command, args.slice(0, -1).join(" "), "<prompt>");
     // codex exec takes the prompt as an arg and ignores stdin, but we pipe all
