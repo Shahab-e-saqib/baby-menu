@@ -50,6 +50,7 @@ vi.mock("electron", () => ({
   BrowserWindow,
   protocol,
   screen: { getDisplayNearestPoint },
+  shell: { openExternal: vi.fn(async () => undefined) },
 }));
 
 vi.mock("../src/main/ipc", () => ({
