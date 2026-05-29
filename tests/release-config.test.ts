@@ -1,7 +1,11 @@
+import { execFile } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
+import { promisify } from "node:util";
 import packageJson from "../package.json";
 import { describe, expect, it } from "vitest";
+
+const execFileAsync = promisify(execFile);
 
 describe("distribution config", () => {
   it("adds mac packaging scripts and keeps TypeScript available at runtime for extension compilation", () => {
@@ -65,10 +69,47 @@ describe("distribution config", () => {
     expect(workflow).toContain("git diff --cached --quiet");
     expect(workflow).toContain("xattr");
     expect(workflow).toContain('"~/.baby-menu"');
+    expect(workflow).toContain('uninstall quit: "com.kunchenguid.baby-menu"');
+    expect(workflow).toContain("uninstall_preflight do");
+    expect(workflow).toContain('system("/usr/bin/pgrep", "-x", "Baby Menu"');
+    expect(workflow).toContain('nohup", args: ["/bin/sh", "-c"');
+    expect(workflow).toContain('while [ -e "#{appdir}/Baby Menu.app" ]; do');
+    expect(workflow).toContain('/usr/bin/open -a "#{appdir}/Baby Menu.app"');
+    expect(workflow).not.toContain("baby-menu.relaunch");
+    expect(workflow).not.toContain("/tmp/com.kunchenguid.baby-menu");
     expect(workflow).not.toContain("tags:");
     await expect(stat(resolve(import.meta.dirname, "../.github/workflows/release.yml"))).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("generates a syntactically valid Homebrew relaunch shell script", async () => {
+    const workflow = await readFile(resolve(import.meta.dirname, "../.github/workflows/release-please.yml"), "utf8");
+    const caskTemplateMatch = workflow.match(/cat > "\$RUNNER_TEMP\/homebrew-tap\/Casks\/baby-menu\.rb" << CASK_EOF\n(?<template>[\s\S]*?)\n\s+CASK_EOF/);
+
+    expect(caskTemplateMatch?.groups?.template).toBeDefined();
+
+    const caskTemplate = (caskTemplateMatch?.groups?.template ?? "").replace(/^\s{10}/gm, "");
+    const { stdout: generatedCask } = await execFileAsync("/bin/bash", [
+      "-c",
+      `cat << CASK_EOF\n${caskTemplate}\nCASK_EOF`,
+    ], {
+      env: {
+        ...process.env,
+        SHA256: "abc123",
+        TAG_NAME: "baby-menu-v1.2.3",
+        VERSION: "1.2.3",
+      },
+    });
+    const scriptMatch = generatedCask.match(/<<~RELAUNCH_SCRIPT\], must_succeed: false\n(?<script>[\s\S]*?)\n\s*RELAUNCH_SCRIPT/);
+
+    expect(scriptMatch?.groups?.script).toBeDefined();
+
+    const script = (scriptMatch?.groups?.script ?? "")
+      .replace(/^\s{14}/gm, "")
+      .replaceAll("#{appdir}", "/Applications");
+
+    await expect(execFileAsync("/bin/sh", ["-n", "-c", script])).resolves.toBeDefined();
   });
 
   it("declares release-please manifest mode for the Baby Menu package", async () => {
