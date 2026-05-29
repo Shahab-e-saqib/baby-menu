@@ -32,6 +32,7 @@ Use lowercase kebab-case ids such as `codex-quota`.
 
 Common files are:
 
+- `layout.tsx` - optional root workspace layout component that arranges active widgets and controls the popover canvas size.
 - `widget.tsx` - the entry module that exports the `BabyMenuWidget` descriptor (and any settings section).
 - `components.tsx` - the widget's React components, exporting components only so edits hot reload in place.
 - `server.ts` for privileged server actions and background tasks.
@@ -39,7 +40,7 @@ Common files are:
 - Optional notes that make the extension understandable and shareable.
 
 Packaged Baby Menu compiles extension modules before loading them.
-Keep imports package-safe: widget modules may import `react`, `react/jsx-runtime`, `react/jsx-dev-runtime`, the design system `@babymenu/ui`, and local helper files only.
+Keep imports package-safe: widget and layout modules may import `react`, `react/jsx-runtime`, `react/jsx-dev-runtime`, the design system `@babymenu/ui`, and local helper files only.
 Server modules may import Node built-ins such as `node:fs` plus local helper files only.
 Both may additionally use type-only imports from `@babymenu/contracts` (see "Stay inside this workspace"); type-only imports are erased at compile time and do not count as runtime dependencies.
 Do not add arbitrary npm package imports to extension code unless the host compiler is updated to support them.
@@ -77,13 +78,71 @@ Do not store tokens or secrets in renderer or browser storage; Baby Menu disable
 It is not a way to keep data fresh in the background - if data must stay current while the popover is closed, use a background task (see "Background tasks").
 A widget may also read data directly with `window.babyMenu.db` and subscribe to `window.babyMenu.background.onUpdate` to re-read when a background task finishes.
 
+## Popover Layout
+
+By default the popover stacks every widget in a single column and sizes itself to that content.
+To take full control of the arrangement and the overall popover size, author one optional file at the **root** of this workspace: `layout.tsx`.
+It default-exports a `BabyMenuLayout` component that receives the active widgets and decides how they fit on the canvas.
+
+This is purely additive and backwards compatible.
+When there is no `layout.tsx`, the host renders the built-in column, so doing nothing keeps the current behavior.
+Older app versions that predate this feature simply ignore the file and render the column, so shipping a layout never breaks them.
+
+The host passes the layout two props (`BabyMenuLayoutProps`):
+
+- `widgets`: a `BabyMenuLayoutWidget[]` of `{ id, title }` for every active extension, so you can iterate or look up what is available.
+- `renderWidget(id)`: returns the fully wired render of one widget by id (or `null` for an unknown id). Always render a widget through this, never by importing another extension's files.
+
+Rules:
+
+- The layout owns its own width: set an explicit width on its root element (for example `className="w-[840px]"` or a fixed grid), and the popover window resizes to fit both that width and the rendered height. Use a normal, content-driven height; do not hard-code the popover height.
+- The layout is renderer-only and may import only `react`, `@babymenu/ui`, and type-only `@babymenu/contracts` - the same import rules as `widget.tsx`. It must not read files, run commands, or do privileged work.
+- The host no longer draws a title above each widget; the widget owns its entire area. If you want a heading, render it inside the widget or the layout.
+- Place every widget you want visible. Any widget you do not render simply will not appear.
+- If the layout throws while rendering, the host falls back to the built-in column so the popover never blanks.
+
+Editing `layout.tsx` hot-reloads like a widget.
+
+Start from this boilerplate, which reproduces the default column, then rearrange it:
+
+```tsx
+import type { BabyMenuLayoutProps } from "@babymenu/contracts";
+
+export default function Layout({ widgets, renderWidget }: BabyMenuLayoutProps) {
+  return (
+    <div className="flex w-[504px] flex-col gap-3 p-3">
+      {widgets.map((widget) => (
+        <div key={widget.id}>{renderWidget(widget.id)}</div>
+      ))}
+    </div>
+  );
+}
+```
+
+A two-column canvas, for comparison, is just a wider root with a grid:
+
+```tsx
+import type { BabyMenuLayoutProps } from "@babymenu/contracts";
+
+export default function Layout({ widgets, renderWidget }: BabyMenuLayoutProps) {
+  return (
+    <div className="grid w-[840px] grid-cols-2 gap-3 p-3">
+      {widgets.map((widget) => (
+        <div key={widget.id}>{renderWidget(widget.id)}</div>
+      ))}
+    </div>
+  );
+}
+```
+
 ## Widget Design System
 
 Baby Menu uses the Monochrome Lab direction in runtime widgets.
-Design for a 504px macOS tray popover, not a web page, dashboard, or chat transcript.
-The host owns the outer widget wrapper, title row, dashed dividers, scrolling, and popover chrome.
-`widget.title` should be a terse tracked-caps key such as `BATTERY`, `CPU TEMP`, or `CLAUDE · WEEKLY`.
-`render()` should return only the body content that belongs below the host title row.
+Design for a macOS tray popover (504px wide by default; a custom `layout.tsx` can widen it - see "Popover Layout"), not a web page, dashboard, or chat transcript.
+The host owns the outer wrapper, dashed dividers, scrolling, and popover chrome, but it no longer draws a title above your widget - the widget owns its entire area.
+So `render()` must include its own affordance to say what it is showing whenever that is not obvious from the content: a terse tracked-caps key such as `BATTERY`, `CPU TEMP`, or `CLAUDE · WEEKLY`, a labeled value, or an icon.
+This is not a mandate to draw a title bar - a self-evident widget (a single big labeled number, a clearly captioned chart) needs no separate heading; just make sure the user can tell what they are looking at.
+`widget.title` is still required, but it is now metadata (the id-stable label the host uses for ordering and accessibility and that a `layout.tsx` reads to place widgets), not something the host renders - keep it terse and tracked-caps, and render your own heading from it if you want one visible.
 
 ### Build with @babymenu/ui first
 
@@ -207,11 +266,11 @@ export function ServiceStatusView() {
 
 ### Style with Tailwind tokens
 
-Widgets are styled with Tailwind utility classes, and the per-widget stylesheet is compiled for you - you never configure Tailwind.
+Widgets and `layout.tsx` are styled with Tailwind utility classes, and the per-module stylesheet is compiled for you - you never configure Tailwind.
 Prefer Baby Menu token utilities for color, type, radius, and surfaces so widgets match the host app.
 Default Tailwind palette colors such as `bg-red-500` and `text-blue-300` are unavailable, but arbitrary Tailwind values can still compile.
 Use arbitrary color values only when a widget genuinely needs them, and keep them rare.
-Keep class names statically visible in the widget source so the dev stylesheet and packaged per-widget compiler can discover them.
+Keep class names statically visible in the widget or layout source so the dev stylesheet and packaged compiler can discover them.
 Avoid constructing Tailwind class fragments dynamically; choose complete class strings from a small map instead.
 
 Use these token utilities:
@@ -244,20 +303,23 @@ Spacing, flex, and grid utilities are standard Tailwind.
 
 ### Example data-widget body
 
+The host draws no title, so this body labels itself with a terse tracked-caps key (here matching `widget.title`) so the user can tell what the `72%` is. Drop the key only when the content is already self-evident.
+
 ```tsx
 import { Progress, StatusDot } from "@babymenu/ui";
 
 export function QuotaView() {
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-baseline justify-between">
-        <span className="text-2xl font-light tracking-value text-ink-strong">
-          72<span className="ml-0.5 text-sm text-ink-soft">%</span>
-        </span>
-        <span className="flex items-center gap-1.5 text-xxs uppercase tracking-caps text-signal-live">
+      <div className="flex items-center justify-between text-xxs uppercase tracking-caps text-ink-label">
+        <span>quota</span>
+        <span className="flex items-center gap-1.5 text-signal-live">
           <StatusDot /> live
         </span>
       </div>
+      <span className="text-2xl font-light tracking-value text-ink-strong">
+        72<span className="ml-0.5 text-sm text-ink-soft">%</span>
+      </span>
       <Progress value={72} />
       <div className="flex justify-between text-xxs uppercase tracking-caps text-ink-label">
         <span>last sync 12:04</span>

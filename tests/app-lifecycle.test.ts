@@ -102,6 +102,7 @@ vi.mock("../src/main/extension-database", () => ({
 
 vi.mock("../src/main/widget-module-registry", () => ({
   createWidgetModuleRegistry: vi.fn(() => ({})),
+  createLayoutModuleRegistry: vi.fn(() => ({ get: vi.fn(async () => null) })),
 }));
 
 vi.mock("../src/main/widget-protocol", () => ({
@@ -200,6 +201,23 @@ describe("startBabyMenuApp", () => {
     popoverController.setContentHeight(333);
 
     expect(browserWindowInstance.setBounds).toHaveBeenLastCalledWith({ x: 8, y: 42, width: 504, height: 333 });
+  });
+
+  it("caps initial renderer size reports before first popover bounds", async () => {
+    const appModule = await import("../src/main/app");
+
+    await appModule.startBabyMenuApp();
+    const onTrayClick = createBabyMenuTray.mock.calls.at(-1)?.[0];
+    browserWindowInstance.loadFile.mockImplementationOnce(async () => {
+      const popoverController = registerIpcHandlers.mock.calls.at(-1)?.[4];
+      popoverController.setContentSize({ width: 2000, height: 300 });
+    });
+
+    await onTrayClick?.({ x: 100, y: 10, width: 24, height: 24 });
+
+    await vi.waitFor(() =>
+      expect(browserWindowInstance.setBounds).toHaveBeenLastCalledWith({ x: 8, y: 42, width: 1424, height: 300 }),
+    );
   });
 
   it("starts the background scheduler and only forwards task-run events to visible renderer", async () => {
