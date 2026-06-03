@@ -1,8 +1,9 @@
-import { cp, mkdir, rm } from "node:fs/promises";
+import type { Dirent } from "node:fs";
+import { cp, mkdir, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 import type { GitActionResult, GitSessionSnapshot, WorkspaceChange } from "../shared/contracts";
-import { classifySnapshotChanges, directoriesDiffer } from "./extension-change";
+import { classifySnapshotChanges, directoriesDiffer, restoreSnapshot } from "./extension-change";
 
 export class DevExtensionChangeSession {
   readonly startedClean = true;
@@ -27,7 +28,17 @@ export class DevExtensionChangeSession {
     await mkdir(extensionsDir, { recursive: true });
     await mkdir(snapshotRoot, { recursive: true });
     const snapshotDir = join(snapshotRoot, randomUUID());
-    await cp(extensionsDir, snapshotDir, { recursive: true, force: true });
+    // Resolve symlinks so the snapshot is a plain copy of the real contents
+    // (copying a symlinked workspace verbatim would alias the snapshot to the
+    // live tree). Skip the user's own `.git` - it is theirs to manage, and can
+    // be large.
+    const source = await realpath(extensionsDir);
+    await cp(source, snapshotDir, {
+      recursive: true,
+      force: true,
+      filter: (entry) => basename(entry) !== ".git",
+    });
+    await markIgnoredEntries(source, snapshotDir, source);
     return new DevExtensionChangeSession(extensionsDir, snapshotDir);
   }
 
@@ -64,10 +75,29 @@ export class DevExtensionChangeSession {
   async rollback(): Promise<GitActionResult> {
     if (this.completed) return { ok: false, reason: "Cannot rollback: session is already completed" };
 
-    await rm(this.extensionsDir, { recursive: true, force: true });
-    await cp(this.snapshotDir, this.extensionsDir, { recursive: true, force: true });
+    await restoreSnapshot(this.snapshotDir, this.extensionsDir);
     await rm(this.snapshotDir, { recursive: true, force: true });
     this.completed = true;
     return { ok: true };
+  }
+}
+
+async function markIgnoredEntries(sourceRoot: string, snapshotRoot: string, current: string): Promise<void> {
+  let entries: Dirent[];
+  try {
+    entries = await readdir(current, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const full = join(current, entry.name);
+    if (entry.name === ".git") {
+      const target = join(snapshotRoot, relative(sourceRoot, full).split(sep).join("/"));
+      await mkdir(dirname(target), { recursive: true });
+      if (entry.isDirectory()) await mkdir(target);
+      else await writeFile(target, "");
+      continue;
+    }
+    if (entry.isDirectory()) await markIgnoredEntries(sourceRoot, snapshotRoot, full);
   }
 }

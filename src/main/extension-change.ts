@@ -1,12 +1,19 @@
 import type { Dirent } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
-import { join, relative, sep } from "node:path";
+import { chmod, lstat, mkdir, readdir, readFile, readlink, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { dirname, join, relative, sep } from "node:path";
 import type { WorkspaceChange, WorkspaceChangeKind } from "../shared/contracts";
 
 // Directory names that live inside the extension workspace but are not
 // themselves extensions, so changes to them are not reported as extension
 // created/updated/removed events.
 const NON_EXTENSION_DIRS = new Set(["recipes"]);
+
+// Directory names that belong to whatever the user layered on top of the
+// workspace (their own version control), not to the extensions themselves. We
+// never diff or touch these, so a user can keep `extensions/` portable however
+// they like - a git repo, a symlink into a dotfiles tree - without the
+// snapshot machinery reverting or deleting their metadata.
+const IGNORED_DIRS = new Set([".git"]);
 
 // The single root layout file the workspace may define (see AGENTS.md). Matched
 // at the workspace root only; a layout.tsx inside an extension is that
@@ -66,10 +73,15 @@ async function readFileOrNull(target: string): Promise<string | null> {
   }
 }
 
-// Builds a flat map of relative file path -> contents for every file under
-// `dir`, so two snapshots of the same directory can be compared byte for byte.
-async function readFileTree(dir: string): Promise<Map<string, string>> {
-  const files = new Map<string, string>();
+type FileTreeEntry =
+  | { kind: "dir"; mode: number }
+  | { kind: "file"; content: Buffer; mode: number }
+  | { kind: "symlink"; target: string };
+
+// Builds a flat map of relative path -> entry under `dir`, so two snapshots of
+// the same directory can be compared byte for byte.
+async function readFileTree(dir: string): Promise<Map<string, FileTreeEntry>> {
+  const files = new Map<string, FileTreeEntry>();
   async function walk(current: string): Promise<void> {
     let entries: Dirent[];
     try {
@@ -78,11 +90,19 @@ async function readFileTree(dir: string): Promise<Map<string, string>> {
       return;
     }
     for (const entry of entries) {
+      if (IGNORED_DIRS.has(entry.name)) continue;
       const full = join(current, entry.name);
       if (entry.isDirectory()) {
+        files.set(relative(dir, full).split(sep).join("/"), { kind: "dir", mode: (await lstat(full)).mode & 0o7777 });
         await walk(full);
       } else if (entry.isFile()) {
-        files.set(relative(dir, full).split(sep).join("/"), await readFile(full, { encoding: "utf8" }));
+        files.set(relative(dir, full).split(sep).join("/"), {
+          kind: "file",
+          content: await readFile(full),
+          mode: (await lstat(full)).mode & 0o7777,
+        });
+      } else if (entry.isSymbolicLink()) {
+        files.set(relative(dir, full).split(sep).join("/"), { kind: "symlink", target: await readlink(full) });
       }
     }
   }
@@ -90,14 +110,91 @@ async function readFileTree(dir: string): Promise<Map<string, string>> {
   return files;
 }
 
+/**
+ * Restores `workspaceDir` to match `snapshotDir`, file by file and in place.
+ *
+ * Unlike a delete-and-recopy, this never removes the workspace directory node
+ * itself, so a symlinked workspace stays a symlink and the restore writes
+ * through it. Files the turn created are removed, files it changed or deleted
+ * are rewritten from the snapshot, and directories the turn left empty are
+ * pruned. Paths under an ignored directory (a user's `.git`) are left untouched.
+ */
+export async function restoreSnapshot(snapshotDir: string, workspaceDir: string): Promise<void> {
+  const [before, after] = await Promise.all([readFileTree(snapshotDir), readFileTree(workspaceDir)]);
+
+  await removeCreatedIgnoredEntries(snapshotDir, workspaceDir, workspaceDir);
+
+  // Remove entries the turn created (present now, absent from the snapshot).
+  for (const relativePath of after.keys()) {
+    if (!before.has(relativePath)) {
+      await rm(join(workspaceDir, relativePath), { recursive: true, force: true });
+    }
+  }
+
+  // Rewrite files the turn changed or deleted back to their pre-turn contents.
+  for (const [relativePath, entry] of before) {
+    const afterEntry = after.get(relativePath);
+    if (fileTreeEntriesEqual(entry, afterEntry)) continue;
+    const target = join(workspaceDir, relativePath);
+    if (!afterEntry || afterEntry.kind !== entry.kind || entry.kind === "symlink") {
+      await rm(target, { recursive: true, force: true });
+    }
+    if (entry.kind === "dir") {
+      await mkdir(target, { recursive: true });
+      await chmod(target, entry.mode);
+    } else if (entry.kind === "file") {
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, entry.content);
+      await chmod(target, entry.mode);
+    } else {
+      await mkdir(dirname(target), { recursive: true });
+      await symlink(entry.target, target);
+    }
+  }
+}
+
+async function removeCreatedIgnoredEntries(snapshotRoot: string, workspaceRoot: string, current: string): Promise<void> {
+  let entries: Dirent[];
+  try {
+    entries = await readdir(current, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const full = join(current, entry.name);
+    if (IGNORED_DIRS.has(entry.name)) {
+      const relativePath = relative(workspaceRoot, full).split(sep).join("/");
+      if (!(await pathEntryExists(join(snapshotRoot, relativePath)))) await rm(full, { recursive: true, force: true });
+      continue;
+    }
+    if (entry.isDirectory()) await removeCreatedIgnoredEntries(snapshotRoot, workspaceRoot, full);
+  }
+}
+
 /** True when two directory trees differ in their file set or any file contents. */
 export async function directoriesDiffer(before: string, after: string): Promise<boolean> {
   const [a, b] = await Promise.all([readFileTree(before), readFileTree(after)]);
   if (a.size !== b.size) return true;
-  for (const [path, content] of a) {
-    if (!b.has(path) || b.get(path) !== content) return true;
+  for (const [path, entry] of a) {
+    if (!fileTreeEntriesEqual(entry, b.get(path))) return true;
   }
   return false;
+}
+
+function fileTreeEntriesEqual(a: FileTreeEntry, b: FileTreeEntry | undefined): boolean {
+  if (!b) return false;
+  if (a.kind === "dir") return b.kind === "dir" && a.mode === b.mode;
+  if (a.kind === "file") return b.kind === "file" && a.mode === b.mode && a.content.equals(b.content);
+  return b.kind === "symlink" && a.target === b.target;
+}
+
+async function pathEntryExists(target: string): Promise<boolean> {
+  try {
+    await lstat(target);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // Classifies how a single file changed between two snapshots, or null if it is
