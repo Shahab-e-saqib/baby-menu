@@ -4,6 +4,7 @@ Thanks for wanting to contribute.
 One rule up front:
 
 **Human-authored pull requests targeting `main` must be raised through [`no-mistakes`](https://github.com/kunchenguid/no-mistakes).**
+We require this to reduce the maintainer's burden of reviewing and merging contributions.
 
 `no-mistakes` puts a local git proxy in front of your real remote.
 Pushing through it runs an AI-driven review, test, lint, and CI pipeline in an isolated worktree, forwards the push upstream only after every check passes, and opens a clean PR automatically.
@@ -27,7 +28,6 @@ See the [no-mistakes quick start](https://kunchenguid.github.io/no-mistakes/star
 ## Repo Conventions
 
 - Use `pnpm` with the pinned version from `packageManager`.
-- Use TDD for bug fixes and new features.
 - Tests live in `tests/` at the repo root.
 - Run `pnpm typecheck`, `pnpm test`, and `pnpm build` before pushing.
 - Run `pnpm generate:contracts` and commit `extensions/babymenu-env.d.ts` after changing extension-facing types or `src/shared/extension-contract-names.ts`.
