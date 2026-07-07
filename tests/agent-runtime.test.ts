@@ -246,6 +246,22 @@ describe("agent runtime defaults", () => {
     expect(prompt).toContain("do not write README or other documentation files");
   });
 
+  it("requires grounding live/system data widgets in the real source before writing code, and verifying against real data before reporting done", () => {
+    const prompt = buildBabyMenuAgentPrompt("Build a Codex quota widget");
+
+    expect(prompt).toContain("inspect that actual source directly");
+    expect(prompt).toContain("before writing any parsing or rendering code");
+    expect(prompt).toContain("targeted, read-only check against a specific known source");
+    expect(prompt).toContain("not permission to run broad or recursive searches");
+    expect(prompt).toMatch(/never guess or pattern-complete/i);
+    expect(prompt).toContain("verify the finished widget against that same live data");
+    expect(prompt).toContain("print only non-secret metadata or explicitly redacted placeholders");
+    expect(prompt).toContain("never echo raw tokens, credential blobs, cookies, auth headers");
+    expect(prompt).not.toContain(
+      "Verify extension work by reasoning through widget render output and server action return shapes.",
+    );
+  });
+
   it("rejects a second send while an agent turn is already running", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "baby-menu-agent-runtime-"));
     const extensionsDir = join(rootDir, "extensions-dev");

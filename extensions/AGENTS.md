@@ -10,6 +10,9 @@ This extension workspace is your working directory, and you should keep every re
 Do not `cd` above this workspace, and do not run recursive `find`, `grep -r`, `rg`, or `ls -R` against your home directory, `/Users/<you>`, or any parent path.
 On macOS those parent paths include the protected `Documents`, `Downloads`, `Desktop`, `Music`, `Movies`, and `Pictures` folders, and traversing them makes the operating system pop a permission prompt for each one - a slow, alarming experience for the user that a widget task never needs.
 If a search returns nothing inside this workspace, stop and rely on the contracts documented below rather than widening the search outward.
+The live-source verification rule near the end of this file is the only narrow exception to the read boundary.
+For that check, an extension-owned server action, or an equivalent one-off verification command for that server action, may perform targeted, read-only access to a specific known source the recipe or server code already names: read a named credential file, run a named command such as the macOS Keychain `security` lookup, or call a named endpoint.
+This does not permit broad or recursive discovery outside the workspace; do not run `find`, `grep -r`, `rg`, `ls -R`, or similar scans against your home directory, `/Users/<you>`, or any parent path while verifying live data.
 
 The Baby Menu host source is not present in this workspace.
 Files such as `src/shared/contracts` and the `@babymenu/ui` source live inside the installed app bundle, not on disk next to your extensions, so there is nothing to find by searching for them.
@@ -480,4 +483,7 @@ Concretely:
 - Do not create `*.test.ts` / `*.test.tsx` files for extensions, and do not run a test runner as part of finishing.
 - Do not create `README.md` or other docs inside an extension directory.
 - Keep code self-explanatory with clear names and short, purposeful comments only where intent is non-obvious - not prose documentation.
-- Verify your work by reasoning through the widget's render output and the server action's return shape, then let the user confirm it live in the popover.
+- "No test files" does not mean "no verification." When a widget or server action surfaces live or system data - local files, command/CLI output, credentials, an API response - inspect that actual source directly (read the real file, run the real command, call the real endpoint) to confirm its true current shape before writing parsing or rendering code.
+  If inspecting a source that can contain secrets, print only non-secret metadata or explicitly redacted placeholders; never echo raw tokens, credential blobs, cookies, auth headers, or secret-bearing payloads to stdout, the agent transcript, logs, or the widget UI.
+  Never guess or pattern-complete a field name, path, or response shape from memory, docs, or a similar existing field.
+- Before reporting the work done, verify the finished result against that same live data yourself: run the server action (or an equivalent one-off shell/node check) against the real source and confirm the exact value you expect is what actually renders. Reasoning about the return shape on paper is not verification, and it is not the user's job to discover a widget doesn't render - do that check yourself first.
