@@ -13,6 +13,7 @@ Embedded agents launched from baby-menu should work from the active extension wo
 - `pnpm dist:mac` - runs `package:mac` and creates `release/Baby-Menu-<version>-universal.dmg` from the dev bundle.
 - `pnpm test` - run all Vitest tests.
 - `pnpm test:e2e` - run only `tests/e2e-*.test.ts` (these include real `acpx/runtime` coverage against `acp-mock` plus bundled adapter coverage against fake local CLIs).
+- `pnpm test:e2e:grok-popover` - run the unattended macOS Grok production-wiring check described in `docs/grok-quota-e2e.md`; it uses the real popover and official Grok billing source without exposing or intentionally refreshing auth.
 - `pnpm typecheck` / `pnpm lint` - both run `tsc --noEmit` against `tsconfig.json`.
 - Single test: `pnpm vitest run tests/<name>.test.ts` (or `pnpm vitest run -t "<name pattern>"`).
 
@@ -30,6 +31,8 @@ Follow these rules:
 ## Dev mode helpers
 
 - `BABY_MENU_KEEP_POPOVER_OPEN=1` disables the blur-to-hide behavior so the popover stays open while devtools / external windows have focus.
+- `BABY_MENU_OPEN_POPOVER_ON_START=1` opens the real popover through the tray bounds path for an explicit unattended check.
+- `BABY_MENU_REMOTE_DEBUGGING_PORT=<port>` enables Electron's loopback Chrome DevTools endpoint for an explicit unattended check; invalid ports are ignored.
 - `BABY_MENU_AGENT=<agent-name>` overrides agent auto-detection when no saved Settings choice exists. E2E tests pass `acpx-mock` via `registryOverrides`.
 - `BABY_MENU_AGENT_TIMEOUT_MS=<ms>` overrides the embedded-agent request timeout.
 - `BABY_MENU_TELEMETRY=0` (or `false` / `off`) disables packaged-release telemetry; `BABY_MENU_UMAMI_HOST` and `BABY_MENU_UMAMI_WEBSITE_ID` override the self-hosted Umami target for telemetry testing.
@@ -69,7 +72,7 @@ The extension-facing slice of that contract is a generated public surface, treat
 - `dev-extension-change-session.ts` - the snapshot Save/Rollback boundary for gitignored dev and packaged extension workspaces.
 - `extension-change.ts` - shared helpers that classify actual workspace diffs into created, updated, or removed extension/layout changes for the Keep/Undo UI.
 - `extension-seeder.ts` - self-heals the packaged extension workspace from the bundled template on every launch: it force-copies the shipped defaults (`AGENTS.md`, `babymenu-env.d.ts`, `recipes/`, and starter extensions) so a stale or edited managed file is restored, while leaving user-created extensions the template does not ship untouched (it never deletes them). If `~/.baby-menu/extensions` is a symlink, it copies into the resolved target without replacing the symlink, so home-manager `mkOutOfStoreSymlink` style writable targets work. Seeding failures are logged and skipped so tray startup can continue. Editing a managed default in `~/.baby-menu/extensions` therefore does not persist; change the source under `extensions/` instead.
-- `extension-module-compiler.ts` - compiles extension widget, root layout, and server modules for production loading; rewrites the `react` and `@babymenu/ui` imports to host protocol modules and rejects any other external import.
+- `extension-module-compiler.ts` - compiles extension widget, root layout, and server modules for production loading; rewrites the `react` and `@babymenu/ui` imports to host protocol modules, rejects any other external import, and repairs content-addressed cache outputs that no longer match their authoritative extension source.
 - `widget-tailwind-css.ts` - compiles widget and layout authored Tailwind utilities against the `@babymenu/ui` `@theme` (single source of truth, `src/ui/theme.css`) for packaged loading, resolving symlinked source directories before copying them for Tailwind scanning.
 - `widget-module-registry.ts` - discovers widget modules and the optional root `layout.tsx`, returning renderer `/@fs` URLs in dev and, in packaged mode, compiled `baby-menu-widget://` module URLs plus sibling compiled `cssUrl` files; compiled layout failures warn and fall back to the built-in column.
 - `widget-protocol.ts` - registers custom protocols for compiled widget and layout modules, their `.css`, and the renderer host shims (`react`, `react/jsx-runtime`, and `@babymenu/ui` re-exported from the host global).
