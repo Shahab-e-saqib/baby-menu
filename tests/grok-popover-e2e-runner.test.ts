@@ -1,13 +1,21 @@
 import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { JSDOM } from "jsdom";
 import { describe, expect, it } from "vitest";
 import { captureGrokAuthIntegrity, grokAuthIntegrityEqual } from "../scripts/grok-auth-integrity.mjs";
+import {
+  GROK_OBSERVABILITY_ATTRIBUTES,
+  grokPopoverObservationExpression,
+  type GrokPopoverObservation,
+} from "../scripts/grok-popover-observability.mjs";
 import { refreshLifecycleStatus } from "../scripts/grok-popover-lifecycle.mjs";
 
 const scriptUrl = new URL("../scripts/e2e-grok-popover.mjs", import.meta.url);
 const docsUrl = new URL("../docs/grok-quota-e2e.md", import.meta.url);
 const widgetFixtureUrl = new URL("./fixtures/grok-quota-generated/widget.tsx.fixture", import.meta.url);
+const mixedRootFixtureUrl = new URL("./fixtures/grok-quota-observability/pr48-mixed-root.html", import.meta.url);
+const completeRootFixtureUrl = new URL("./fixtures/grok-quota-observability/pr48-complete-root.html", import.meta.url);
 const packageUrl = new URL("../package.json", import.meta.url);
 
 describe("unattended Grok popover E2E runner", () => {
@@ -77,13 +85,217 @@ describe("unattended Grok popover E2E runner", () => {
       lifecycle,
       view: { state: "success", terminal: true, completed: 0, checkedAt: "2026-07-14T20:00:01.000Z" },
       previousCheckedAt: "2026-07-14T20:00:00.000Z",
-    })).toEqual({ settled: true, stage: "renderer-settled" });
+    })).toEqual({ settled: false, stage: "renderer-previous-result" });
     expect(refreshLifecycleStatus({
       expected: 1,
       lifecycle: { started: 1, resolved: 1, rejected: 0 },
       view: { state: "success", terminal: true, completed: 0, checkedAt: "2026-07-14T20:00:00.000Z" },
       previousCheckedAt: null,
-    })).toEqual({ settled: true, stage: "renderer-settled" });
+    })).toEqual({ settled: false, stage: "renderer-previous-result" });
+  });
+
+  it("reproduces the PR 48 mixed root and prefixed-descendant mismatch", async () => {
+    const html = await readFile(mixedRootFixtureUrl, "utf8");
+    const document = new JSDOM(html).window.document;
+    const partialRoot = document.querySelector("[data-grok-e2e]");
+
+    expect(partialRoot?.getAttribute("data-grok-e2e")).toBe("success");
+    expect(partialRoot?.getAttribute("data-checked-at")).toBeNull();
+    expect(partialRoot?.querySelector("[data-grok-checked-at]")?.getAttribute("data-grok-checked-at"))
+      .toBe("2026-07-14T20:00:00.000Z");
+  });
+
+  it("falls back deterministically instead of selecting the partial PR 48 root", async () => {
+    const html = await readFile(mixedRootFixtureUrl, "utf8");
+    const dom = new JSDOM(html, { runScripts: "outside-only" });
+    const view = dom.window.eval(grokPopoverObservationExpression()) as GrokPopoverObservation;
+
+    expect(view).toMatchObject({
+      observabilityMode: "installed-fallback",
+      state: "success",
+      checkedAt: "2026-07-14T20:00:00.000Z",
+      cacheSchema: "2",
+      source: "grok-credits-grpc-web",
+      sourceVersion: "1",
+      operation: "grok_api_v2.GrokBuildBilling.GetGrokCreditsConfig",
+      periodType: "weekly",
+      percentUsed: "22",
+      percentRemaining: "78",
+      percentageField: "config.creditUsagePercent",
+      resetAt: "2026-07-21T20:00:00.000Z",
+      resetField: "config.currentPeriod.end",
+      completed: 1,
+      terminal: true,
+    });
+  });
+
+  it("selects a complete stable root contract", () => {
+    const dom = new JSDOM(`
+      <div
+        data-grok-e2e="success"
+        data-grok-checked-at="2026-07-14T20:00:00.000Z"
+        data-grok-stale="false"
+        data-grok-warning-kind="none"
+        data-grok-failure-kind="none"
+        data-grok-cache-schema="2"
+        data-grok-source="grok-credits-grpc-web"
+        data-grok-source-version="1"
+        data-grok-operation="grok_api_v2.GrokBuildBilling.GetGrokCreditsConfig"
+        data-grok-period="weekly"
+        data-grok-percent-used="22"
+        data-grok-percent-remaining="78"
+        data-grok-percentage-field="config.creditUsagePercent"
+        data-grok-reset-at="2026-07-21T20:00:00.000Z"
+        data-grok-reset-field="config.currentPeriod.end"
+        data-grok-products='[{"id":"product:grok-build","percentUsed":14}]'
+        data-grok-completed-acquisitions="1"
+      >22% used 78% left</div>
+    `, { runScripts: "outside-only" });
+    const view = dom.window.eval(grokPopoverObservationExpression()) as GrokPopoverObservation;
+
+    expect(view).toMatchObject({
+      observabilityMode: "root-contract",
+      state: "success",
+      completed: 1,
+      terminal: true,
+    });
+  });
+
+  it("mechanically aligns the manually managed PR 48 copy with the complete root contract", async () => {
+    const [completeHtml, mixedHtml] = await Promise.all([
+      readFile(completeRootFixtureUrl, "utf8"),
+      readFile(mixedRootFixtureUrl, "utf8"),
+    ]);
+    const completeDom = new JSDOM(completeHtml, { runScripts: "outside-only" });
+    const mixedDom = new JSDOM(mixedHtml, { runScripts: "outside-only" });
+    const root = completeDom.window.document.querySelector("[data-grok-e2e]");
+
+    for (const attribute of GROK_OBSERVABILITY_ATTRIBUTES) {
+      expect(root?.hasAttribute(attribute), attribute).toBe(true);
+      expect(root?.querySelector(`[${attribute}]`), attribute).toBeNull();
+    }
+
+    const completeView = completeDom.window.eval(grokPopoverObservationExpression()) as GrokPopoverObservation;
+    const mixedView = mixedDom.window.eval(grokPopoverObservationExpression()) as GrokPopoverObservation;
+    expect(completeView.observabilityMode).toBe("root-contract");
+    expect(completeView).toMatchObject({
+      checkedAt: mixedView.checkedAt,
+      cacheSchema: mixedView.cacheSchema,
+      operation: mixedView.operation,
+      source: mixedView.source,
+      sourceVersion: mixedView.sourceVersion,
+      periodType: mixedView.periodType,
+      percentUsed: mixedView.percentUsed,
+      percentRemaining: mixedView.percentRemaining,
+      percentageField: mixedView.percentageField,
+      resetAt: mixedView.resetAt,
+      resetField: mixedView.resetField,
+      products: mixedView.products,
+      completed: mixedView.completed,
+    });
+
+    const button = completeDom.window.document.querySelector("button");
+    button?.setAttribute("disabled", "");
+    if (button) button.textContent = "checking";
+    const refreshingView = completeDom.window.eval(grokPopoverObservationExpression()) as GrokPopoverObservation;
+    expect(refreshingView).toMatchObject({
+      observabilityMode: "root-contract",
+      state: "success",
+      checkedAt: completeView.checkedAt,
+      completed: completeView.completed,
+    });
+  });
+
+  it("reserves waiting for the initial acquisition", () => {
+    function waitingDom(completed: string): JSDOM {
+      const attributes = GROK_OBSERVABILITY_ATTRIBUTES
+        .filter((attribute) => attribute !== "data-grok-e2e")
+        .map((attribute) => {
+          const value = attribute === "data-grok-stale" ? "false"
+            : attribute === "data-grok-warning-kind" || attribute === "data-grok-failure-kind" ? "none"
+              : attribute === "data-grok-products" ? "[]"
+                : attribute === "data-grok-completed-acquisitions" ? completed
+                  : "";
+          return `${attribute}='${value}'`;
+        })
+        .join(" ");
+      return new JSDOM(`<div data-grok-e2e="waiting" ${attributes}></div>`, { runScripts: "outside-only" });
+    }
+
+    const initialView = waitingDom("0").window.eval(grokPopoverObservationExpression()) as GrokPopoverObservation;
+    expect(initialView).toMatchObject({ state: "waiting", completed: 0, terminal: false });
+    const invalidView = waitingDom("1").window.eval(grokPopoverObservationExpression()) as GrokPopoverObservation;
+    expect(invalidView).toMatchObject({
+      observabilityMode: "invalid",
+      state: "contract-invalid",
+      terminal: true,
+    });
+    expect(invalidView.observabilityError).toContain("root with terminal evidence");
+  });
+
+  it("rejects an unsupported terminal partial root without polling to an ambiguous timeout", () => {
+    const dom = new JSDOM('<section aria-label="menu widgets"><div data-grok-e2e="success"></div></section>', {
+      runScripts: "outside-only",
+    });
+    const view = dom.window.eval(grokPopoverObservationExpression()) as GrokPopoverObservation;
+
+    expect(view).toMatchObject({
+      observabilityMode: "invalid",
+      state: "contract-invalid",
+      terminal: true,
+    });
+    expect(view.observabilityError).toContain("root with terminal evidence does not satisfy the stable root contract");
+  });
+
+  it("rejects visible settled evidence on an incomplete waiting root", () => {
+    const dom = new JSDOM(`
+      <section aria-label="menu widgets">
+        <div data-grok-e2e="waiting">
+          <span data-grok-checked-at="2026-07-14T20:00:00.000Z">last checked 1:00 PM</span>
+          <p>checked 1</p>
+          <button type="button">refresh</button>
+        </div>
+      </section>
+    `, { runScripts: "outside-only" });
+    const view = dom.window.eval(grokPopoverObservationExpression()) as GrokPopoverObservation;
+
+    expect(view).toMatchObject({
+      observabilityMode: "invalid",
+      state: "contract-invalid",
+      terminal: true,
+    });
+  });
+
+  it("rejects terminal root states without a completed acquisition", () => {
+    const html = `
+      <div
+        data-grok-e2e="failure"
+        data-grok-checked-at="2026-07-14T20:00:00.000Z"
+        data-grok-stale="false"
+        data-grok-warning-kind="none"
+        data-grok-failure-kind="connectivity"
+        data-grok-cache-schema=""
+        data-grok-source=""
+        data-grok-source-version=""
+        data-grok-operation=""
+        data-grok-period=""
+        data-grok-percent-used=""
+        data-grok-percent-remaining=""
+        data-grok-percentage-field=""
+        data-grok-reset-at=""
+        data-grok-reset-field=""
+        data-grok-products="[]"
+        data-grok-completed-acquisitions="0"
+      ></div>
+    `;
+    const dom = new JSDOM(html, { runScripts: "outside-only" });
+    const view = dom.window.eval(grokPopoverObservationExpression()) as GrokPopoverObservation;
+
+    expect(view).toMatchObject({
+      observabilityMode: "invalid",
+      state: "contract-invalid",
+      terminal: true,
+    });
   });
 
   it("opens the real popover and drives startup and manual refresh without accessibility input", async () => {
@@ -97,7 +309,8 @@ describe("unattended Grok popover E2E runner", () => {
     expect(script).toContain("readSanitizedLifecycle");
     expect(script).toContain("refreshLifecycleStatus");
     expect(script).toContain("observedStage: lastStatus.stage");
-    expect(script).toContain('root.getAttribute("data-grok-e2e") !== "waiting"');
+    expect(script).toContain("grokPopoverObservationExpression");
+    expect(script).toContain("Grok renderer observability contract invalid");
     expect(script).toContain("waitForCompletedRefresh(expectedManualLifecycle, priorView.checkedAt)");
     expect(script).toContain("startupView.checkedAt");
     expect(script).toContain("intervalView.checkedAt");
@@ -140,15 +353,25 @@ describe("unattended Grok popover E2E runner", () => {
   it("keeps exact values in state and rounds only visible used and remaining copy", async () => {
     const fixture = await readFile(widgetFixtureUrl, "utf8");
 
-    expect(fixture).toContain('data-percent-used={primary ? String(primary.percentUsed) : ""}');
-    expect(fixture).toContain('data-percent-remaining={remaining === undefined ? "" : String(remaining)}');
+    expect(fixture).toContain('data-grok-percent-used={primary ? String(primary.percentUsed) : ""}');
+    expect(fixture).toContain('data-grok-percent-remaining={remaining === undefined ? "" : String(remaining)}');
     expect(fixture).toContain('`${Math.round(primary.percentUsed)}% used`');
     expect(fixture).toContain('`${Math.round(remaining)}% left`');
-    expect(fixture).toContain('data-products={JSON.stringify(products)}');
+    expect(fixture).toContain('data-grok-products={JSON.stringify(products)}');
     expect(fixture).toContain('view.result.data.period.type === "unspecified" ? "Credits" : view.result.data.period.type');
     expect(fixture).toContain('productWindows.filter((window) => window.percentUsed > 0).map');
     expect(fixture).toContain('{Math.round(window.percentUsed)}% used');
     expect(fixture).not.toContain("useEffect");
+  });
+
+  it("keeps every stable observability attribute on each generated root state", async () => {
+    const fixture = await readFile(widgetFixtureUrl, "utf8");
+
+    for (const attribute of GROK_OBSERVABILITY_ATTRIBUTES) {
+      expect(fixture.match(new RegExp(`${attribute}(?:=|\\s)`, "g"))?.length, attribute).toBe(3);
+    }
+    expect(fixture).toContain("data-grok-completed-acquisitions={String(view.completedRefreshes)}");
+    expect(fixture).not.toMatch(/data-(?:checked-at|cache-schema|operation|percent-used|products)=/);
   });
 
   it("seeds and repairs an isolated installed-equivalent legacy cache", async () => {
