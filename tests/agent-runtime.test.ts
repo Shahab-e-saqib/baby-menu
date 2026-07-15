@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,17 +36,19 @@ async function waitUntil(condition: () => boolean, timeoutMs = 1000) {
 
 function fakeTurn({
   events,
+  result = Promise.resolve({ status: "completed" as const }),
   cancel = vi.fn(async () => undefined),
   closeStream = vi.fn(async () => undefined),
 }: {
   events: AsyncIterable<AcpRuntimeEvent>;
+  result?: AcpRuntimeTurn["result"];
   cancel?: AcpRuntimeTurn["cancel"];
   closeStream?: AcpRuntimeTurn["closeStream"];
 }): AcpRuntimeTurn {
   return {
     requestId: "test-turn",
     events,
-    result: Promise.resolve({ status: "completed" }),
+    result,
     cancel,
     closeStream,
   };
@@ -159,6 +161,27 @@ describe("agent runtime defaults", () => {
 
     await expect(collected).resolves.toBe("done");
     vi.useRealTimers();
+  });
+
+  it("rejects a completed ACP refusal without exposing its output as an error", async () => {
+    async function* events(): AsyncIterable<AcpRuntimeEvent> {
+      yield { type: "text_delta", stream: "output", text: "Bearer secret-provider-detail" };
+    }
+
+    const collected = collectAgentTurnOutput(
+      fakeTurn({
+        events: events(),
+        result: Promise.resolve({ status: "completed", stopReason: "refusal" }),
+      }),
+      { idleTimeoutMs: 50 },
+    );
+
+    await expect(collected).rejects.toMatchObject({
+      name: "AgentTurnFailedError",
+      code: "AGENT_REFUSED",
+      message: "Agent refused the request.",
+    });
+    await expect(collected).rejects.not.toThrow(/secret-provider-detail/);
   });
 
   it("cancels the ACP turn when it produces no activity before the idle timeout", async () => {
@@ -650,6 +673,53 @@ describe("agent runtime telemetry", () => {
     expect(telemetry.events).toContainEqual({
       name: "agent_turn",
       fields: { agent: "custom", status: "error" },
+    });
+  });
+
+  it("records a failed diagnostic when agent startup throws", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "baby-menu-startup-log-"));
+    const extensionsDir = join(rootDir, "extensions-dev");
+    const runtime = new BabyMenuAgentRuntime(rootDir, {
+      agentName: "codex",
+      paths: {
+        extensionsDir,
+        agentStateDir: join(rootDir, ".cache", "acp-sessions"),
+        snapshotDir: join(rootDir, ".cache", "snapshots"),
+      },
+    });
+    const internals = runtime as unknown as SendInternals;
+    internals.ensureAgentRuntimeCwd = vi.fn(async () => extensionsDir);
+    internals.beginChangeSession = vi.fn(async () => ({
+      startedClean: true,
+      canSave: true,
+      canRollback: true,
+      snapshot: (message?: string) => ({ startedClean: true, canSave: true, canRollback: true, head: "HEAD", message }),
+      hasChanges: vi.fn(async () => false),
+      save: vi.fn(async () => ({ ok: true })),
+      rollback: vi.fn(async () => ({ ok: true })),
+    }));
+    internals.ensureRuntime = vi.fn(async () => {
+      throw new AgentTurnFailedError({
+        message: "Codex authentication failed. Sign in and try again.",
+        code: "AUTHENTICATION",
+        detailCode: "ACP_START_FAILED",
+      });
+    });
+
+    await expect(runtime.send("add a widget")).rejects.toThrow("Codex authentication failed");
+
+    const logDir = join(rootDir, ".cache", "baby-menu", "agent-turns");
+    const logFiles = await readdir(logDir);
+    expect(logFiles).toHaveLength(1);
+    const log = JSON.parse(await readFile(join(logDir, logFiles[0]!), "utf8"));
+    expect(log).toMatchObject({
+      agentName: "codex",
+      status: "failed",
+      error: {
+        message: "Codex authentication failed. Sign in and try again.",
+        code: "AUTHENTICATION",
+        detailCode: "ACP_START_FAILED",
+      },
     });
   });
 });
