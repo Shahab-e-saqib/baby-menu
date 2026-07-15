@@ -73,8 +73,9 @@ describe("loadRecipes", () => {
     expect(html).toContain("a permission, I/O, or other read failure is <code>auth_source_unreadable</code>");
     expect(html).toContain("invalid JSON is <code>auth_source_malformed</code>");
     expect(html).toContain("no usable credential is <code>auth_source_incompatible</code>");
-    expect(html).toContain("run the bounded official CLI capability probe at most once");
-    expect(html).not.toContain("classify the result as <code>parse_incompatible</code>");
+    expect(html).toContain("Do not run a CLI capability probe for missing, unreadable, malformed, incompatible, ambiguous, or healthy auth");
+    expect(html).toContain("conditional official-client refresh");
+    expect(html).toContain("Do not classify these local source outcomes as <code>parse_incompatible</code> or sign-in-required");
     expect(html).not.toContain("missing file, empty object, or no candidate with a non-empty <code>key</code>");
     expect(html).not.toContain("return <code>Grok sign-in required</code> with <code>sourceTried: [\"local-auth\"]</code>");
   });
