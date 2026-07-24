@@ -6,6 +6,7 @@ async function loadLauncher() {
   return import(new URL("../scripts/dev.mjs", import.meta.url).href) as Promise<{
     ACTIVE_ENV: string;
     EXTENSIONS_DIR_ENV: string;
+    pnpmSpawnOptions: (platform?: NodeJS.Platform) => { shell?: boolean };
     runDev: (options: Record<string, unknown>) => number;
     resetDevWorkspace: (options: Record<string, unknown>) => number;
   }>;
@@ -66,7 +67,7 @@ describe("dev launcher", () => {
         args: ["exec", "electron-vite", "dev"],
         cwd: "/repo",
         env: expect.objectContaining({ [ACTIVE_ENV]: "1" }),
-        shell: true,
+        shell: undefined,
       },
     ]);
   });
@@ -104,7 +105,7 @@ describe("dev launcher", () => {
           [ACTIVE_ENV]: "1",
           [EXTENSIONS_DIR_ENV]: join("/repo", "extensions-dev"),
         }),
-        shell: true,
+        shell: undefined,
       },
     ]);
   });
@@ -134,14 +135,11 @@ describe("dev launcher", () => {
     }));
   });
 
-  it("launches pnpm through a shell so pnpm.cmd resolves on Windows", async () => {
-    // Node cannot spawn a `.cmd`/`.bat` without `shell: true`; pnpm is `pnpm.cmd`
-    // on Windows. The dev launcher must invoke pnpm through a shell on every
-    // platform so the Windows developer workflow works out of the box.
+  it("launches pnpm through a shell only on Windows", async () => {
     const { ACTIVE_ENV, runDev } = await loadLauncher();
     const harness = createHarness();
 
-    runDev({ cwd: "/repo", env: { [ACTIVE_ENV]: "1" }, ...harness });
+    runDev({ cwd: "/repo", env: { [ACTIVE_ENV]: "1" }, platform: "win32", ...harness });
 
     expect(harness.spawnCalls[0]?.shell).toBe(true);
   });
@@ -177,7 +175,7 @@ describe("dev launcher", () => {
           [ACTIVE_ENV]: "1",
           [EXTENSIONS_DIR_ENV]: devExtensionsDir,
         }),
-        shell: true,
+        shell: undefined,
       },
     ]);
   });

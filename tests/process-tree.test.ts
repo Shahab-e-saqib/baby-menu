@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createChildTerminator,
   selectTerminationStrategy,
+  TASKKILL_TIMEOUT_MS,
   taskkillArgs,
   type TerminableChild,
 } from "../src/adapters/shared/process-tree";
@@ -61,6 +62,10 @@ describe("createChildTerminator (posix-signals)", () => {
 });
 
 describe("createChildTerminator (windows-taskkill)", () => {
+  it("bounds each taskkill attempt", () => {
+    expect(TASKKILL_TIMEOUT_MS).toBe(5000);
+  });
+
   it("runs taskkill /T /F with the numeric pid on terminate (injection-free)", () => {
     const { child } = fakeChild(909);
     const runTaskkill = vi.fn<(args: string[]) => { status: number | null }>(() => ({ status: 0 }));
@@ -90,5 +95,18 @@ describe("createChildTerminator (windows-taskkill)", () => {
     terminator.terminate();
     terminator.force();
     expect(runTaskkill).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["failed", 1],
+    ["timed out", null],
+  ])("force-kills the immediate child when taskkill %s", (_label, status) => {
+    const { child, kills } = fakeChild(909);
+    const runTaskkill = vi.fn<(args: string[]) => { status: number | null }>(() => ({ status }));
+    const terminator = createChildTerminator(child, { strategy: "windows-taskkill", runTaskkill });
+
+    terminator.terminate();
+
+    expect(kills).toEqual(["SIGKILL"]);
   });
 });

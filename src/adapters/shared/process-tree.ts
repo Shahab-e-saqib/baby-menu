@@ -20,6 +20,7 @@ export type TerminationStrategy = "posix-signals" | "windows-taskkill";
 
 /** The slowest acceptable grace between a soft and a hard termination, in ms. */
 export const TERMINATION_GRACE_MS = 1000;
+export const TASKKILL_TIMEOUT_MS = 5000;
 
 export function selectTerminationStrategy(platform: NodeJS.Platform = process.platform): TerminationStrategy {
   return platform === "win32" ? "windows-taskkill" : "posix-signals";
@@ -42,7 +43,7 @@ export type CreateTerminatorOptions = {
   /**
    * Runs `taskkill` with the given args. Injectable so tests can capture the args
    * without a real Windows host. Defaults to `spawnSync("taskkill", args,
-   * { windowsHide: true, shell: false })`.
+   * { windowsHide: true, shell: false, timeout: TASKKILL_TIMEOUT_MS })`.
    */
   runTaskkill?: (args: string[]) => TaskkillResult;
 };
@@ -64,10 +65,18 @@ export function createChildTerminator(child: TerminableChild, options: CreateTer
   if (strategy === "windows-taskkill") {
     const runTaskkill =
       options.runTaskkill ??
-      ((args: string[]) => spawnSync("taskkill", args, { windowsHide: true, shell: false }) as TaskkillResult);
+      ((args: string[]) =>
+        spawnSync("taskkill", args, {
+          windowsHide: true,
+          shell: false,
+          timeout: TASKKILL_TIMEOUT_MS,
+        }) as TaskkillResult);
     const killTree = (): void => {
       if (child.pid == null) return;
-      runTaskkill(taskkillArgs(child.pid));
+      const result = runTaskkill(taskkillArgs(child.pid));
+      if (result.status !== 0) {
+        child.kill("SIGKILL");
+      }
     };
     return {
       // Console CLI trees have no graceful-shutdown path on Windows, so the soft

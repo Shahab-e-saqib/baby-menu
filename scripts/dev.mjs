@@ -13,10 +13,9 @@ function commandStatus(result) {
   return typeof result.status === "number" ? result.status : 1;
 }
 
-// pnpm is `pnpm.cmd` on Windows; Node cannot spawn a `.cmd`/`.bat` without a
-// shell, so package-manager invocations run through a shell on every platform
-// (harmless on POSIX, required on Windows).
-const SPAWN_SHELL = { shell: true };
+export function pnpmSpawnOptions(platform = process.platform) {
+  return platform === "win32" ? { shell: true } : {};
+}
 
 function gitRoot(cwd, execFileSyncFn) {
   return String(execFileSyncFn("git", ["rev-parse", "--show-toplevel"], { cwd })).trim();
@@ -41,14 +40,18 @@ function prepareDevExtensions({ rootDir, devExtensionsDir, mkdirSyncFn, copyFile
 export function runDev({
   cwd = process.cwd(),
   env = process.env,
+  platform = process.platform,
   execFileSync: execFileSyncFn = execFileSync,
   spawnSync: spawnSyncFn = spawnSync,
   mkdirSync: mkdirSyncFn = mkdirSync,
   copyFileSync: copyFileSyncFn = copyFileSync,
   cpSync: cpSyncFn = cpSync,
 } = {}) {
+  const spawnOptions = pnpmSpawnOptions(platform);
   if (env[ACTIVE_ENV] === "1") {
-    return commandStatus(spawnSyncFn("pnpm", ["exec", "electron-vite", "dev"], { cwd, env, stdio: "inherit", ...SPAWN_SHELL }));
+    return commandStatus(
+      spawnSyncFn("pnpm", ["exec", "electron-vite", "dev"], { cwd, env, stdio: "inherit", ...spawnOptions }),
+    );
   }
 
   const rootDir = gitRoot(cwd, execFileSyncFn);
@@ -67,7 +70,7 @@ export function runDev({
         [EXTENSIONS_DIR_ENV]: devExtensionsDir,
       },
       stdio: "inherit",
-      ...SPAWN_SHELL,
+      ...spawnOptions,
     }),
   );
 }
@@ -75,6 +78,7 @@ export function runDev({
 export function resetDevWorkspace({
   cwd = process.cwd(),
   env = process.env,
+  platform = process.platform,
   execFileSync: execFileSyncFn = execFileSync,
   spawnSync: spawnSyncFn = spawnSync,
   mkdirSync: mkdirSyncFn = mkdirSync,
@@ -94,6 +98,7 @@ export function resetDevWorkspace({
   return runDev({
     cwd: rootDir,
     env,
+    platform,
     execFileSync: execFileSyncFn,
     spawnSync: spawnSyncFn,
     mkdirSync: mkdirSyncFn,
