@@ -56,6 +56,7 @@ describe("dev launcher", () => {
     const status = runDev({
       cwd: "/repo",
       env: { [ACTIVE_ENV]: "1" },
+      platform: "linux",
       ...harness,
     });
 
@@ -76,7 +77,7 @@ describe("dev launcher", () => {
     const { ACTIVE_ENV, EXTENSIONS_DIR_ENV, runDev } = await loadLauncher();
     const harness = createHarness();
 
-    const status = runDev({ cwd: "/repo", env: {}, ...harness });
+    const status = runDev({ cwd: "/repo", env: {}, platform: "linux", ...harness });
 
     expect(status).toBe(0);
     expect(harness.createdDirs).toContain(join("/repo", "extensions-dev"));
@@ -149,7 +150,7 @@ describe("dev launcher", () => {
     const devExtensionsDir = join("/repo", "extensions-dev");
     const harness = createHarness();
 
-    const status = resetDevWorkspace({ cwd: "/repo", env: {}, ...harness });
+    const status = resetDevWorkspace({ cwd: "/repo", env: {}, platform: "linux", ...harness });
 
     expect(status).toBe(0);
     expect(harness.removedDirs).toContain(devExtensionsDir);

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createChildTerminator,
   selectTerminationStrategy,
+  TASKKILL_MAX_ATTEMPTS,
   TASKKILL_TIMEOUT_MS,
   taskkillArgs,
   type TerminableChild,
@@ -53,9 +54,9 @@ describe("createChildTerminator (posix-signals)", () => {
     expect(kills).toEqual(["SIGTERM", "SIGKILL"]);
   });
 
-  it("defaults to the host strategy (posix on this test host)", () => {
+  it("uses an explicit posix strategy independent of the test host", () => {
     const { child, kills } = fakeChild(222);
-    const terminator = createChildTerminator(child);
+    const terminator = createChildTerminator(child, { strategy: "posix-signals" });
     terminator.terminate();
     expect(kills).toEqual(["SIGTERM"]);
   });
@@ -64,6 +65,7 @@ describe("createChildTerminator (posix-signals)", () => {
 describe("createChildTerminator (windows-taskkill)", () => {
   it("bounds each taskkill attempt", () => {
     expect(TASKKILL_TIMEOUT_MS).toBe(5000);
+    expect(TASKKILL_MAX_ATTEMPTS).toBe(2);
   });
 
   it("runs taskkill /T /F with the numeric pid on terminate (injection-free)", () => {
@@ -97,16 +99,35 @@ describe("createChildTerminator (windows-taskkill)", () => {
     expect(runTaskkill).not.toHaveBeenCalled();
   });
 
+  it("preserves the immediate child when the first taskkill fails so force can retry the tree", () => {
+    const { child, kills } = fakeChild(909);
+    const statuses: Array<number | null> = [1, 0];
+    const runTaskkill = vi.fn<(args: string[]) => { status: number | null }>(() => ({
+      status: statuses.shift() ?? null,
+    }));
+    const terminator = createChildTerminator(child, { strategy: "windows-taskkill", runTaskkill });
+
+    terminator.terminate();
+    expect(kills).toEqual([]);
+
+    terminator.force();
+    expect(runTaskkill).toHaveBeenCalledTimes(2);
+    expect(kills).toEqual([]);
+  });
+
   it.each([
     ["failed", 1],
     ["timed out", null],
-  ])("force-kills the immediate child when taskkill %s", (_label, status) => {
+  ] as const)("force-kills the immediate child after bounded taskkill attempts %s", (_label, status) => {
     const { child, kills } = fakeChild(909);
     const runTaskkill = vi.fn<(args: string[]) => { status: number | null }>(() => ({ status }));
     const terminator = createChildTerminator(child, { strategy: "windows-taskkill", runTaskkill });
 
     terminator.terminate();
+    expect(kills).toEqual([]);
+    terminator.force();
 
+    expect(runTaskkill).toHaveBeenCalledTimes(TASKKILL_MAX_ATTEMPTS);
     expect(kills).toEqual(["SIGKILL"]);
   });
 });

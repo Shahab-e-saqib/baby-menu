@@ -21,6 +21,7 @@ export type TerminationStrategy = "posix-signals" | "windows-taskkill";
 /** The slowest acceptable grace between a soft and a hard termination, in ms. */
 export const TERMINATION_GRACE_MS = 1000;
 export const TASKKILL_TIMEOUT_MS = 5000;
+export const TASKKILL_MAX_ATTEMPTS = 2;
 
 export function selectTerminationStrategy(platform: NodeJS.Platform = process.platform): TerminationStrategy {
   return platform === "win32" ? "windows-taskkill" : "posix-signals";
@@ -71,10 +72,22 @@ export function createChildTerminator(child: TerminableChild, options: CreateTer
           shell: false,
           timeout: TASKKILL_TIMEOUT_MS,
         }) as TaskkillResult);
-    const killTree = (): void => {
-      if (child.pid == null) return;
-      const result = runTaskkill(taskkillArgs(child.pid));
-      if (result.status !== 0) {
+    let taskkillAttempts = 0;
+    const killTree = (): boolean => {
+      if (child.pid == null) return true;
+      taskkillAttempts += 1;
+      return runTaskkill(taskkillArgs(child.pid)).status === 0;
+    };
+    const terminate = (): void => {
+      if (taskkillAttempts < TASKKILL_MAX_ATTEMPTS) {
+        killTree();
+      }
+    };
+    const force = (): void => {
+      while (taskkillAttempts < TASKKILL_MAX_ATTEMPTS) {
+        if (killTree()) return;
+      }
+      if (child.pid != null) {
         child.kill("SIGKILL");
       }
     };
@@ -83,8 +96,8 @@ export function createChildTerminator(child: TerminableChild, options: CreateTer
       // and hard attempts are the same bounded `/T /F` kill. force() still runs
       // after the grace period as a safety net in case the first attempt raced
       // a late-spawned descendant.
-      terminate: killTree,
-      force: killTree,
+      terminate,
+      force,
     };
   }
 
