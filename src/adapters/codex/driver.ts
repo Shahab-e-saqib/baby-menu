@@ -84,8 +84,7 @@ export class CodexDriver implements SessionDriver {
     logDebug(SCOPE, "spawn", this.command, args.slice(0, -1).join(" "), "<prompt>");
     // On Windows the agent CLI is usually a `.cmd` shim; resolveDriverCommand
     // applies PATHEXT and driverSpawnOptions sets `shell: true` for `.cmd`/`.bat`
-    // so Node can launch it. All other platforms (and Windows `.exe`) spawn
-    // directly, keeping signal-based termination exact.
+    // so Node can launch it. Other commands spawn directly.
     const command = resolveDriverCommand(this.command);
     // codex exec takes the prompt as an arg and ignores stdin, but we pipe all
     // three streams so the handle types as ChildProcessWithoutNullStreams.

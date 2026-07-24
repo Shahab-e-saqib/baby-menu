@@ -57,8 +57,9 @@ export function taskkillArgs(pid: number): string[] {
 /**
  * Creates a platform-aware terminator for a single child. POSIX behavior is
  * byte-for-byte the historical `child.kill("SIGTERM")` then `child.kill("SIGKILL")`,
- * so existing driver cancellation/disposal tests are unchanged. Windows routes
- * through `taskkill /T /F /PID <pid>` so the whole CLI tree is torn down.
+ * so existing driver cancellation/disposal tests are unchanged. Windows makes
+ * at most two bounded `taskkill /T /F /PID <pid>` attempts, then force-kills the
+ * immediate child if both tree-kill attempts fail.
  */
 export function createChildTerminator(child: TerminableChild, options: CreateTerminatorOptions = {}): ChildTerminator {
   const strategy = options.strategy ?? selectTerminationStrategy();
@@ -94,8 +95,8 @@ export function createChildTerminator(child: TerminableChild, options: CreateTer
     return {
       // Console CLI trees have no graceful-shutdown path on Windows, so the soft
       // and hard attempts are the same bounded `/T /F` kill. force() still runs
-      // after the grace period as a safety net in case the first attempt raced
-      // a late-spawned descendant.
+      // after the grace period so a transient failure or a late-spawned
+      // descendant gets one bounded retry.
       terminate,
       force,
     };

@@ -79,8 +79,7 @@ export class ClaudeDriver implements SessionDriver {
     logDebug(SCOPE, "spawn", this.command, this.sessionId ? "(resume)" : "(new)");
     // On Windows the agent CLI is usually a `.cmd` shim; resolveDriverCommand
     // applies PATHEXT and driverSpawnOptions sets `shell: true` for `.cmd`/`.bat`
-    // so Node can launch it. All other platforms (and Windows `.exe`) spawn
-    // directly, keeping signal-based termination exact.
+    // so Node can launch it. Other commands spawn directly.
     const command = resolveDriverCommand(this.command);
     const child = spawn(command, args, {
       cwd,

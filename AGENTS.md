@@ -154,14 +154,7 @@ Do not write generated extension files, the local extension database, compiled m
 
 ### Platform services (macOS and Windows)
 
-The app is a macOS tray app today, but its platform-adjacent seams are factored into platform-aware helpers so a Windows port preserves the Electron architecture instead of forking it. Keep these seams narrow and tested on both platforms:
-
-- `src/main/shell-path.ts` - PATH expansion for a GUI launch. POSIX-only merge of common Unix directories + the login-shell PATH; on Windows it returns the inherited PATH unchanged (no Unix delimiter/directory corruption). Never append Unix syntax on `win32`.
-- `src/main/launch-command.ts` - builds acpx registry-override command strings. acpx's override is a single **string** that acpx reparses with its own `splitCommandLine` (which strips backslashes inside double quotes); `quoteLaunchToken`/`joinLaunchCommand` produce parser-safe strings (forward-slash normalization on Windows), and `splitAcpxCommand` is a faithful port of the pinned acpx parser used by tests to prove round-trips. `buildAdapterLauncherTokens` scopes `ELECTRON_RUN_AS_NODE` to the adapter child via an `env` prefix on POSIX; on Windows the env prefix is omitted (there is no `env` command and acpx cannot inject env via the string).
-- `src/adapters/shared/platform-spawn.ts` - `resolveDriverCommand` (PATHEXT-aware) + `driverSpawnOptions` (`shell: true` for `.cmd`/`.bat`) so the claude/codex drivers spawn native Windows shims. Resolution uses the `node:path` win32 module so it is correct regardless of the host running it (and deterministic on a non-Windows CI host).
-- `src/adapters/shared/process-tree.ts` - `createChildTerminator` keeps exact POSIX `SIGTERM`->`SIGKILL` behavior and, on Windows, runs a bounded `taskkill /T /F /PID <pid>` with a numeric pid (no shell interpolation). Both adapter drivers cancel and dispose through it.
-
-The Windows port status, the exact remaining clean-Windows validation steps (bundled-adapter `ELECTRON_RUN_AS_NODE` delivery via a launcher, real `.cmd` cancellation, `shell: true` + prompt-as-argv hardening), and what this milestone deliberately does not claim are documented in `docs/windows-port-validation.md`. The roadmap is the feasibility report at `data/baby-menu-windows-scout/report.md`.
+Keep platform-adjacent changes behind explicit platform branches so the existing macOS/POSIX behavior remains unchanged. The Windows seam inventory, current port status, remaining clean-Windows validation, and excluded scope are owned by `docs/windows-port-validation.md`; do not claim packaged Windows support before the remaining checks there pass.
 
 ### Recipes and extensions
 

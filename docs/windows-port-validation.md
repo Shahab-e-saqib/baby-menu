@@ -1,20 +1,16 @@
 # Windows port: current state and remaining validation
 
-This document records what the **first Windows-port milestone** (PR) implements,
-what it deliberately proves, and - crucially - what it does **not** claim to
-prove, because those proofs require a real Windows host that is not available in
-the development environment. It is the honest companion to the spike work; treat
-anything in this list marked "needs clean-Windows validation" as **not yet
-shipped for Windows**, even though the host-side plumbing is in place.
-
-The roadmap source of truth is the feasibility report at
-`data/baby-menu-windows-scout/report.md` (outside the repo copy); the staged
-plan there is authoritative. This document only covers the first milestone.
+This document records what the **first Windows-port milestone** implements, what
+it deliberately proves, and - crucially - what it does **not** claim to prove.
+The remaining proofs require a clean, packaged Windows environment that this
+milestone's CI does not exercise. Treat anything below marked "needs
+clean-Windows validation" as **not yet shipped for Windows**, even though the
+host-side plumbing is in place.
 
 ## What this milestone implements and validates automatically
 
-All of the following are covered by automated tests that pass on the current
-host and on the `windows-latest` CI job added in `.github/workflows/ci.yml`:
+All of the following are covered by automated tests. The `windows-latest` job in
+`.github/workflows/ci.yml` runs these platform-portable suites on a Windows host:
 
 1. **Platform-safe PATH handling** (`src/main/shell-path.ts`)
    - `mergeShellPath` no longer appends Unix directories or a `:` delimiter on
@@ -44,10 +40,13 @@ host and on the `windows-latest` CI job added in `.github/workflows/ci.yml`:
 
 4. **Bounded Windows process-tree cancellation** (`src/adapters/shared/process-tree.ts`)
    - `createChildTerminator` keeps the exact POSIX `SIGTERM` -> `SIGKILL` behavior
-     (so existing driver tests are unchanged) and, on Windows, runs
-     `taskkill /T /F /PID <pid>` with a numeric pid (no shell interpolation of
-     untrusted text). Both drivers cancel and dispose through the terminator.
-     Covered by `tests/process-tree.test.ts`.
+     and, on Windows, runs `taskkill /T /F /PID <pid>` with a numeric pid (no
+     shell interpolation of untrusted text). Each call has a five-second timeout,
+     and cancellation makes at most two attempts. After a failed first attempt,
+     the terminator does not separately kill the immediate child, so the forced
+     attempt can retry the tree while that PID remains available. If both attempts
+     fail or time out, it force-kills the immediate child. Both drivers cancel and
+     dispose through the terminator. Covered by `tests/process-tree.test.ts`.
 
 5. **`pnpm.cmd`-safe dev launcher** (`scripts/dev.mjs`)
    - Package-manager invocations run through `shell: true` so `pnpm.cmd` resolves
@@ -77,11 +76,11 @@ launch command is just `<executable> <adapter-path>` (correctly quoted). The
 command string is correct, but running the bundled Electron binary as Node
 requires the env var, which means a small launcher is needed.
 
-**Remaining clean-Windows validation step (report Milestone 0):**
+**Remaining clean-Windows validation step:**
 1. Author a minimal Windows launcher (a `.cmd` shim that sets
    `ELECTRON_RUN_AS_NODE=1` and execs the bundled Electron with the adapter
-   path, OR a tiny signed executable), pointed at by `buildAdapterLauncherTokens`
-   on `win32`.
+   path, or a tiny launcher executable), pointed at by
+   `buildAdapterLauncherTokens` on `win32`.
 2. On a clean Windows 11 x64 VM, build a temporary packaged Electron app under a
    `C:\Program Files\...` path with spaces/non-ASCII, and prove
    Electron-as-Node launches one bundled ACP adapter with the env set safely and
@@ -126,12 +125,11 @@ The `windows` CI job intentionally runs only the five platform-portable unit
 files. Many other specs execute `/bin/bash`/`/bin/sh`, rely on Unix fixtures
 (shebangs, `chmod`, symlinks), or are explicitly `skipIf(win32)`. Porting the
 core ACP/change-session e2e to Windows (removing the win32 skips in
-`tests/e2e-acp-runtime.test.ts`) is report Milestone 1's exit criterion and is
-not done here.
+`tests/e2e-acp-runtime.test.ts`) is not done here.
 
 ### E. Out of scope for this milestone entirely
 
-Per the task scope, none of the following are in this PR: tray polish/assets,
+None of the following are in this milestone: tray polish/assets,
 `.ico`, AppUserModelID, single-instance lock, NSIS installer, Authenticode
 signing, update copy, recipe platform-filtering/parity, or any greenfield
-rewrite. See the report's staged plan (Milestones 2-5).
+rewrite.
