@@ -152,6 +152,17 @@ When files did change, the renderer summarizes one changed extension, multiple c
 Packaged runtime state lives under `~/.baby-menu` and is not git-backed.
 Do not write generated extension files, the local extension database, compiled modules, preferences, logs, snapshots, or ACP session state into the `.app` bundle.
 
+### Platform services (macOS and Windows)
+
+The app is a macOS tray app today, but its platform-adjacent seams are factored into platform-aware helpers so a Windows port preserves the Electron architecture instead of forking it. Keep these seams narrow and tested on both platforms:
+
+- `src/main/shell-path.ts` - PATH expansion for a GUI launch. POSIX-only merge of common Unix directories + the login-shell PATH; on Windows it returns the inherited PATH unchanged (no Unix delimiter/directory corruption). Never append Unix syntax on `win32`.
+- `src/main/launch-command.ts` - builds acpx registry-override command strings. acpx's override is a single **string** that acpx reparses with its own `splitCommandLine` (which strips backslashes inside double quotes); `quoteLaunchToken`/`joinLaunchCommand` produce parser-safe strings (forward-slash normalization on Windows), and `splitAcpxCommand` is a faithful port of the pinned acpx parser used by tests to prove round-trips. `buildAdapterLauncherTokens` scopes `ELECTRON_RUN_AS_NODE` to the adapter child via an `env` prefix on POSIX; on Windows the env prefix is omitted (there is no `env` command and acpx cannot inject env via the string).
+- `src/adapters/shared/platform-spawn.ts` - `resolveDriverCommand` (PATHEXT-aware) + `driverSpawnOptions` (`shell: true` for `.cmd`/`.bat`) so the claude/codex drivers spawn native Windows shims. Resolution uses the `node:path` win32 module so it is correct regardless of the host running it (and deterministic on a non-Windows CI host).
+- `src/adapters/shared/process-tree.ts` - `createChildTerminator` keeps exact POSIX `SIGTERM`->`SIGKILL` behavior and, on Windows, runs a bounded `taskkill /T /F /PID <pid>` with a numeric pid (no shell interpolation). Both adapter drivers cancel and dispose through it.
+
+The Windows port status, the exact remaining clean-Windows validation steps (bundled-adapter `ELECTRON_RUN_AS_NODE` delivery via a launcher, real `.cmd` cancellation, `shell: true` + prompt-as-argv hardening), and what this milestone deliberately does not claim are documented in `docs/windows-port-validation.md`. The roadmap is the feasibility report at `data/baby-menu-windows-scout/report.md`.
+
 ### Recipes and extensions
 
 - Recipes are HTML files in `recipes/` inside the active extension workspace. `recipe-loader.ts` discovers `*.html`, sorts them, and extracts the title from `<title>` or first `<h1>`. They are intentionally HTML so the embedded agent can read them from its cwd and use embedded interactive demos.

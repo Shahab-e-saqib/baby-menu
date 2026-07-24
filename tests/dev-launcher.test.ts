@@ -13,7 +13,7 @@ async function loadLauncher() {
 
 function createHarness() {
   const execCalls: Array<{ command: string; args: string[]; cwd?: string }> = [];
-  const spawnCalls: Array<{ command: string; args: string[]; cwd?: string; env?: NodeJS.ProcessEnv }> = [];
+  const spawnCalls: Array<{ command: string; args: string[]; cwd?: string; env?: NodeJS.ProcessEnv; shell?: boolean }> = [];
   const createdDirs: string[] = [];
   const removedDirs: string[] = [];
   const copiedFiles: Array<{ source: string; destination: string }> = [];
@@ -35,8 +35,8 @@ function createHarness() {
       if (args.join(" ") === "rev-parse --show-toplevel") return "/repo\n";
       return "";
     }),
-    spawnSync: vi.fn((command: string, args: string[], options?: { cwd?: string; env?: NodeJS.ProcessEnv }) => {
-      spawnCalls.push({ command, args, cwd: options?.cwd, env: options?.env });
+    spawnSync: vi.fn((command: string, args: string[], options?: { cwd?: string; env?: NodeJS.ProcessEnv; shell?: boolean }) => {
+      spawnCalls.push({ command, args, cwd: options?.cwd, env: options?.env, shell: options?.shell });
       return { status: 0 };
     }),
   };
@@ -66,6 +66,7 @@ describe("dev launcher", () => {
         args: ["exec", "electron-vite", "dev"],
         cwd: "/repo",
         env: expect.objectContaining({ [ACTIVE_ENV]: "1" }),
+        shell: true,
       },
     ]);
   });
@@ -103,6 +104,7 @@ describe("dev launcher", () => {
           [ACTIVE_ENV]: "1",
           [EXTENSIONS_DIR_ENV]: join("/repo", "extensions-dev"),
         }),
+        shell: true,
       },
     ]);
   });
@@ -130,6 +132,18 @@ describe("dev launcher", () => {
     expect(harness.spawnCalls[0]?.env).toEqual(expect.objectContaining({
       [EXTENSIONS_DIR_ENV]: "/tmp/baby-menu-dev-extensions",
     }));
+  });
+
+  it("launches pnpm through a shell so pnpm.cmd resolves on Windows", async () => {
+    // Node cannot spawn a `.cmd`/`.bat` without `shell: true`; pnpm is `pnpm.cmd`
+    // on Windows. The dev launcher must invoke pnpm through a shell on every
+    // platform so the Windows developer workflow works out of the box.
+    const { ACTIVE_ENV, runDev } = await loadLauncher();
+    const harness = createHarness();
+
+    runDev({ cwd: "/repo", env: { [ACTIVE_ENV]: "1" }, ...harness });
+
+    expect(harness.spawnCalls[0]?.shell).toBe(true);
   });
 
   it("removes extensions-dev before running dev on reset", async () => {
@@ -163,6 +177,7 @@ describe("dev launcher", () => {
           [ACTIVE_ENV]: "1",
           [EXTENSIONS_DIR_ENV]: devExtensionsDir,
         }),
+        shell: true,
       },
     ]);
   });

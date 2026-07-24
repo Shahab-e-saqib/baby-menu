@@ -4,6 +4,8 @@ import { AdapterTurnError, type SessionDriver, type UpdateSink } from "../shared
 import { LineReader } from "../shared/line-reader.js";
 import { logDebug, logError } from "../shared/log.js";
 import { childEnv } from "../shared/child-env.js";
+import { resolveDriverCommand, driverSpawnOptions } from "../shared/platform-spawn.js";
+import { createChildTerminator } from "../shared/process-tree.js";
 import { mapCodexEvent, type CodexExecEvent } from "./mapper.js";
 
 const SCOPE = "codex-adapter";
@@ -80,10 +82,21 @@ export class CodexDriver implements SessionDriver {
       : ["exec", ...common, "--color", "never", text];
 
     logDebug(SCOPE, "spawn", this.command, args.slice(0, -1).join(" "), "<prompt>");
+    // On Windows the agent CLI is usually a `.cmd` shim; resolveDriverCommand
+    // applies PATHEXT and driverSpawnOptions sets `shell: true` for `.cmd`/`.bat`
+    // so Node can launch it. All other platforms (and Windows `.exe`) spawn
+    // directly, keeping signal-based termination exact.
+    const command = resolveDriverCommand(this.command);
     // codex exec takes the prompt as an arg and ignores stdin, but we pipe all
     // three streams so the handle types as ChildProcessWithoutNullStreams.
-    const child = spawn(this.command, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: childEnv() });
+    const child = spawn(command, args, {
+      cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+      env: childEnv(),
+      ...driverSpawnOptions(this.command),
+    });
     this.child = child;
+    const terminator = createChildTerminator(child);
     // Close stdin immediately: codex exec reads stdin to EOF before finishing,
     // so leaving the pipe open makes it hang (and exit non-zero on teardown).
     child.stdin.end();
@@ -121,8 +134,8 @@ export class CodexDriver implements SessionDriver {
         if (settled || cancelled) return;
         cancelled = true;
         logDebug(SCOPE, "cancel: killing codex exec");
-        child.kill("SIGTERM");
-        forceKillTimer = setTimeout(() => child.kill("SIGKILL"), TERMINATION_GRACE_MS);
+        terminator.terminate();
+        forceKillTimer = setTimeout(() => terminator.force(), TERMINATION_GRACE_MS);
       };
       this.activeCancel = onAbort;
 
@@ -191,7 +204,7 @@ export class CodexDriver implements SessionDriver {
       return;
     }
     if (this.child) {
-      this.child.kill("SIGTERM");
+      createChildTerminator(this.child).terminate();
     }
   }
 }

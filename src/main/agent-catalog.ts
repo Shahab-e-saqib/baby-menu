@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import type { BabyMenuCustomAgentInput } from "../shared/contracts";
+import { joinLaunchCommand } from "./launch-command";
 
 export type AgentDefinition = {
   /** acpx agent name and registry key. */
@@ -138,26 +139,28 @@ export function resolveAgentCatalog(options: ResolveAgentCatalogOptions = {}): A
  * `resolveAdapterPath("claude")` returns the absolute path to the adapter's
  * bundled entry; the host resolves it differently in dev vs packaged mode.
  * `launcher` is the command + leading args that run the adapter as a Node
- * program (e.g. `["node"]`, or `["env", "ELECTRON_RUN_AS_NODE=1", electronPath]`
+ * program (e.g. `["node"]`, or `buildAdapterLauncherTokens({ executable, env })`
  * to run the bundled Electron as Node without depending on a separate install).
  * Agents that already carry an explicit `launchCommand` (custom agents) are left
  * untouched.
+ *
+ * The resulting string is built with `joinLaunchCommand`, which quotes each
+ * token so acpx's `splitCommandLine` reparses it verbatim on every platform -
+ * including Windows install paths containing spaces, backslashes, `&`,
+ * parentheses, and non-ASCII characters (see launch-command.ts).
  */
 export function withAdapterLaunchCommands(
   catalog: readonly AgentDefinition[],
   resolveAdapterPath: (adapter: "claude" | "codex") => string,
   launcher: string[] = ["node"],
+  options: { platform?: NodeJS.Platform } = {},
 ): AgentDefinition[] {
+  const platform = options.platform ?? process.platform;
   return catalog.map((agent) => {
     if (!agent.adapter || agent.launchCommand) return { ...agent };
     const adapterPath = resolveAdapterPath(agent.adapter);
-    return { ...agent, launchCommand: shellJoin([...launcher, adapterPath]) };
+    return { ...agent, launchCommand: joinLaunchCommand([...launcher, adapterPath], platform) };
   });
-}
-
-/** Joins command tokens into a single string, quoting tokens with whitespace. */
-function shellJoin(tokens: string[]): string {
-  return tokens.map((token) => (/\s/.test(token) ? `"${token}"` : token)).join(" ");
 }
 
 export function toAgentOptions(

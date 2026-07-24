@@ -55,3 +55,39 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  windows:
+    # Headless Windows runtime foundation coverage. This proves the TypeScript
+    # compiles, the three app bundles build, and the new platform-safe units
+    # (PATH, adapter-launch quoting, PATHEXT/.cmd spawn, process-tree
+    # cancellation, pnpm.cmd dev launcher) pass on a real Windows host. The full
+    # test suite is intentionally NOT run here: many specs execute /bin/bash,
+    # /bin/sh, or Unix-only fixtures and skip on win32 - porting that suite is
+    # tracked separately. See docs/windows-port-validation.md.
+    name: windows / typecheck / build / platform units
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.1.1
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Platform-safe unit tests
+        run: pnpm vitest run tests/shell-path.test.ts tests/launch-command.test.ts tests/platform-spawn.test.ts tests/process-tree.test.ts tests/dev-launcher.test.ts

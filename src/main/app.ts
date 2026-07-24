@@ -23,6 +23,7 @@ import { createPreferencesService } from "./preferences";
 import { createBackgroundTaskSource, createServerActionRegistry } from "./server-action-registry";
 import { getDefaultTelemetry, initDefaultTelemetry } from "./telemetry";
 import { expandProcessPathForGuiLaunch } from "./shell-path";
+import { buildAdapterLauncherTokens } from "./launch-command";
 import { createUpdateChecker } from "./update-checker";
 import { createBabyMenuTray, type BabyMenuTray } from "./tray";
 import { createLayoutModuleRegistry, createWidgetModuleRegistry } from "./widget-module-registry";
@@ -186,7 +187,14 @@ export async function startBabyMenuApp(): Promise<void> {
   // adapters. Run them with the bundled Electron as Node (ELECTRON_RUN_AS_NODE)
   // so there is no dependency on a separately-installed `node` - the same class
   // of PATH fragility that made the agent look "unavailable" before.
-  const adapterLauncher = ["env", "ELECTRON_RUN_AS_NODE=1", process.execPath];
+  // buildAdapterLauncherTokens scopes that env var to the child on POSIX via a
+  // leading `env` prefix. On Windows there is no `env` command, so the token is
+  // the executable only and `ELECTRON_RUN_AS_NODE` delivery is a documented
+  // clean-Windows validation step (a launcher); see launch-command.ts.
+  const adapterLauncher = buildAdapterLauncherTokens({
+    executable: process.execPath,
+    env: { ELECTRON_RUN_AS_NODE: "1" },
+  });
   // The catalog is a live runtime service: it owns agents.json and pushes
   // rebuilt registry overrides into the runtime so UI-added custom agents apply
   // immediately. agentRuntime is referenced through closures (assigned just below)

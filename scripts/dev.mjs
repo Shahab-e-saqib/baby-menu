@@ -13,6 +13,11 @@ function commandStatus(result) {
   return typeof result.status === "number" ? result.status : 1;
 }
 
+// pnpm is `pnpm.cmd` on Windows; Node cannot spawn a `.cmd`/`.bat` without a
+// shell, so package-manager invocations run through a shell on every platform
+// (harmless on POSIX, required on Windows).
+const SPAWN_SHELL = { shell: true };
+
 function gitRoot(cwd, execFileSyncFn) {
   return String(execFileSyncFn("git", ["rev-parse", "--show-toplevel"], { cwd })).trim();
 }
@@ -43,7 +48,7 @@ export function runDev({
   cpSync: cpSyncFn = cpSync,
 } = {}) {
   if (env[ACTIVE_ENV] === "1") {
-    return commandStatus(spawnSyncFn("pnpm", ["exec", "electron-vite", "dev"], { cwd, env, stdio: "inherit" }));
+    return commandStatus(spawnSyncFn("pnpm", ["exec", "electron-vite", "dev"], { cwd, env, stdio: "inherit", ...SPAWN_SHELL }));
   }
 
   const rootDir = gitRoot(cwd, execFileSyncFn);
@@ -62,6 +67,7 @@ export function runDev({
         [EXTENSIONS_DIR_ENV]: devExtensionsDir,
       },
       stdio: "inherit",
+      ...SPAWN_SHELL,
     }),
   );
 }
