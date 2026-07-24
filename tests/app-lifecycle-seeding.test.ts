@@ -18,6 +18,7 @@ const createBabyMenuTray = vi.fn((_onClick: (bounds: Rectangle) => void) => tray
 const electronApp = {
   commandLine: { appendSwitch: vi.fn() },
   dock: { hide: vi.fn() },
+  getAppPath: vi.fn(() => "/repo"),
   getPath: vi.fn(() => "/tmp"),
   getVersion: vi.fn(() => "0.0.0-test"),
   getLoginItemSettings: vi.fn(() => ({ openAtLogin: false })),

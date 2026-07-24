@@ -19,9 +19,9 @@ export type ClaudeDriverOptions = {
 };
 
 /**
- * Drives `claude -p` per turn. The first turn runs `claude -p <prompt>` and
- * captures the session id from the stream; subsequent turns run
- * `claude -p --resume <id> <prompt>` so conversation memory carries over.
+ * Drives `claude -p` per turn. The prompt is delivered over stdin, the first
+ * turn captures the session id from the stream, and subsequent turns add
+ * `--resume <id>` so conversation memory carries over.
  *
  * Why per-turn instead of one persistent process: `claude -p --input-format
  * stream-json` does NOT process input until stdin reaches EOF (it is not a
@@ -73,8 +73,8 @@ export class ClaudeDriver implements SessionDriver {
       ...this.extraArgs,
     ];
     const args = this.sessionId
-      ? ["-p", "--resume", this.sessionId, ...flags, text]
-      : ["-p", ...flags, text];
+      ? ["-p", "--resume", this.sessionId, ...flags]
+      : ["-p", ...flags];
 
     logDebug(SCOPE, "spawn", this.command, this.sessionId ? "(resume)" : "(new)");
     // On Windows the agent CLI is usually a `.cmd` shim; resolveDriverCommand
@@ -89,9 +89,6 @@ export class ClaudeDriver implements SessionDriver {
     });
     this.child = child;
     const terminator = createChildTerminator(child);
-    // claude reads stdin until EOF before producing output; the prompt is passed
-    // as an arg, so close stdin immediately.
-    child.stdin.end();
     const reader = new LineReader();
 
     const activePrompt = new Promise<schema.StopReason>((resolve, reject) => {
@@ -151,6 +148,9 @@ export class ClaudeDriver implements SessionDriver {
       });
       child.stderr.setEncoding("utf8");
       child.stderr.on("data", (chunk: string) => logDebug(SCOPE, "stderr", chunk.trimEnd()));
+      child.stdin.on("error", () => {
+        if (!cancelled) fail(new AdapterTurnError("CLI_START_FAILED", "Claude CLI could not receive the prompt."));
+      });
       child.on("error", () => {
         if (cancelled) settle("cancelled");
         else fail(new AdapterTurnError("CLI_START_FAILED", "Claude CLI could not be started."));
@@ -175,6 +175,8 @@ export class ClaudeDriver implements SessionDriver {
       else signal.addEventListener("abort", onAbort, { once: true });
     });
     this.activePrompt = activePrompt;
+    if (signal.aborted) child.stdin.end();
+    else child.stdin.end(text);
     return activePrompt;
   }
 

@@ -24,10 +24,10 @@ export type CodexDriverOptions = {
 };
 
 /**
- * Drives `codex exec --json` per turn. The first turn runs `codex exec <prompt>`
- * with `--color never` and captures the `thread.started` id; subsequent turns
- * run `codex exec resume <id> <prompt>` without `--color`, because the resume
- * subcommand rejects that flag, so conversation memory carries over.
+ * Drives `codex exec --json` per turn. Prompts are delivered over stdin. The
+ * first turn uses `--color never` and captures the `thread.started` id;
+ * subsequent turns run `codex exec resume <id>` without `--color`, because the
+ * resume subcommand rejects that flag, so conversation memory carries over.
  *
  * Each turn is its own short-lived child (exec is one-shot), which keeps us off
  * the `codex app-server` path that starts the computer-use MCP server behind
@@ -78,16 +78,14 @@ export class CodexDriver implements SessionDriver {
     // (clap exits 2), so it stays off the resume path. Output is `--json`
     // anyway, so this only suppresses any incidental coloring on the first turn.
     const args = this.threadId
-      ? ["exec", "resume", this.threadId, ...common, text]
-      : ["exec", ...common, "--color", "never", text];
+      ? ["exec", "resume", this.threadId, ...common]
+      : ["exec", ...common, "--color", "never"];
 
-    logDebug(SCOPE, "spawn", this.command, args.slice(0, -1).join(" "), "<prompt>");
+    logDebug(SCOPE, "spawn", this.command, args.join(" "), "<prompt via stdin>");
     // On Windows the agent CLI is usually a `.cmd` shim; resolveDriverCommand
     // applies PATHEXT and driverSpawnOptions sets `shell: true` for `.cmd`/`.bat`
     // so Node can launch it. Other commands spawn directly.
     const command = resolveDriverCommand(this.command);
-    // codex exec takes the prompt as an arg and ignores stdin, but we pipe all
-    // three streams so the handle types as ChildProcessWithoutNullStreams.
     const child = spawn(command, args, {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
@@ -96,9 +94,6 @@ export class CodexDriver implements SessionDriver {
     });
     this.child = child;
     const terminator = createChildTerminator(child);
-    // Close stdin immediately: codex exec reads stdin to EOF before finishing,
-    // so leaving the pipe open makes it hang (and exit non-zero on teardown).
-    child.stdin.end();
     const reader = new LineReader();
 
     const activePrompt = new Promise<schema.StopReason>((resolve, reject) => {
@@ -165,6 +160,9 @@ export class CodexDriver implements SessionDriver {
       });
       child.stderr.setEncoding("utf8");
       child.stderr.on("data", (chunk: string) => logDebug(SCOPE, "stderr", chunk.trimEnd()));
+      child.stdin.on("error", () => {
+        if (!cancelled) fail(new AdapterTurnError("CLI_START_FAILED", "Codex CLI could not receive the prompt."));
+      });
       child.on("error", () => {
         if (cancelled) settle("cancelled");
         else fail(new AdapterTurnError("CLI_START_FAILED", "Codex CLI could not be started."));
@@ -191,6 +189,8 @@ export class CodexDriver implements SessionDriver {
       else signal.addEventListener("abort", onAbort, { once: true });
     });
     this.activePrompt = activePrompt;
+    if (signal.aborted) child.stdin.end();
+    else child.stdin.end(text);
     return activePrompt;
   }
 

@@ -108,33 +108,37 @@ export function joinLaunchCommand(tokens: readonly string[], platform: NodeJS.Pl
 export type AdapterLauncherSpec = {
   /** Executable that runs the bundled adapter as a Node program (node, or the bundled Electron). */
   executable: string;
-  /**
-   * Environment to scope to the adapter child. On POSIX this is delivered as a
-   * leading `env KEY=VALUE ...` prefix in the command string. Windows has no
-   * `env` command and acpx cannot inject env via the command string, so on
-   * Windows the env is omitted here and delivering `ELECTRON_RUN_AS_NODE` (to
-   * run the bundled Electron as Node) requires a Windows launcher - a documented
-   * clean-Windows validation step, not something this string can carry.
-   */
+  /** Environment to scope to the adapter child. */
   env?: Record<string, string>;
   /** Platform to build for; defaults to process.platform. */
   platform?: NodeJS.Platform;
+  /** App path passed to the Electron executable in Windows source/dev mode. */
+  windowsAppPath?: string;
 };
+
+export const WINDOWS_ADAPTER_LAUNCHER_SWITCH = "--baby-menu-electron-node-launcher";
+export const WINDOWS_ADAPTER_LAUNCHER_SEPARATOR = "baby-menu-adapter-entry";
 
 /**
  * Builds the prefix tokens that run the bundled adapter as a Node program.
  *
  * POSIX: `["env", "KEY=VALUE", ..., executable]` - the historical, proven
  *   Electron-as-Node wiring that scopes `ELECTRON_RUN_AS_NODE` to the child.
- * Windows: `[executable]` - the env prefix is dropped (no `env` command); the
- *   command string still carries the executable + adapter path correctly quoted,
- *   but `ELECTRON_RUN_AS_NODE` delivery needs the launcher (see AdapterLauncherSpec.env).
+ * Windows: the Electron app runs a dedicated launcher mode that applies the
+ *   requested child environment before starting the adapter.
  */
 export function buildAdapterLauncherTokens(spec: AdapterLauncherSpec): string[] {
   const platform = spec.platform ?? process.platform;
   const envEntries = spec.env ? Object.entries(spec.env).map(([key, value]) => `${key}=${value}`) : [];
   if (platform === "win32") {
-    return [spec.executable];
+    if (envEntries.length === 0) return [spec.executable];
+    return [
+      spec.executable,
+      ...(spec.windowsAppPath ? [spec.windowsAppPath] : []),
+      WINDOWS_ADAPTER_LAUNCHER_SWITCH,
+      ...envEntries,
+      WINDOWS_ADAPTER_LAUNCHER_SEPARATOR,
+    ];
   }
   return [...(envEntries.length > 0 ? ["env"] : []), ...envEntries, spec.executable];
 }

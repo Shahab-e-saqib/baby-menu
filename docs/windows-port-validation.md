@@ -19,7 +19,19 @@ All of the following are covered by automated tests. The `windows-latest` job in
      `tests/shell-path.test.ts` covers the final-entry-corruption defect,
      multiple drive letters, and preserved POSIX behavior.
 
-2. **Correctly-quoted bundled-adapter launch path** (`src/main/launch-command.ts`)
+2. **Child-scoped Electron-as-Node adapter launcher**
+   (`src/main/windows-adapter-launcher.ts`, `src/main/app.ts`)
+   - On Windows, the acpx override starts the bundled Electron executable in a
+     dedicated Baby Menu launcher mode. That mode applies
+     `ELECTRON_RUN_AS_NODE=1` only to the adapter child, starts the same Electron
+     executable with the bundled `.mjs`, inherits all three ACP stdio handles,
+     and exits with the adapter's status.
+   - Source/dev commands include the Electron app path needed to enter the same
+     launcher mode. Packaged commands launch the installed executable directly.
+     `tests/launch-command.test.ts` proves both built-in agents carry the
+     launcher, scoped environment, and exact adapter path.
+
+3. **Correctly-quoted bundled-adapter launch path** (`src/main/launch-command.ts`)
    - `quoteLaunchToken` / `joinLaunchCommand` build a launch-command string that
      round-trips through acpx's own `splitCommandLine` parser for Windows
      install paths containing spaces, backslashes, `&`, parentheses, and
@@ -31,14 +43,23 @@ All of the following are covered by automated tests. The `windows-latest` job in
      `tests/launch-command.test.ts`, including the confirmed backslash-stripping
      defect as a regression anchor.
 
-3. **PATHEXT / `.cmd`-aware native agent launching** (`src/adapters/shared/platform-spawn.ts`)
+4. **Prompt delivery outside shell-parsed argv**
+   (`src/adapters/claude/driver.ts`, `src/adapters/codex/driver.ts`)
+   - Both drivers omit the user prompt from positional arguments and write it
+     verbatim to the CLI's stdin before closing the stream. Prompts containing
+     cmd.exe metacharacters, percent signs, newlines, and quotes therefore never
+     enter the `.cmd` shell command.
+   - Cross-platform fake-CLI regressions prove verbatim delivery, absence from
+     argv, and that an attempted extra command does not create its sentinel.
+
+5. **PATHEXT / `.cmd`-aware native agent launching** (`src/adapters/shared/platform-spawn.ts`)
    - `resolveDriverCommand` resolves a bare command to its `.cmd` shim via
      PATHEXT and PATH search (mirrors acpx's own resolution); `driverSpawnOptions`
      sets `shell: true` for `.cmd`/`.bat` shims so Node can launch them. Both
      drivers (`claude`, `codex`) now resolve and spawn through these helpers.
      Covered by `tests/platform-spawn.test.ts`.
 
-4. **Bounded Windows process-tree cancellation** (`src/adapters/shared/process-tree.ts`)
+6. **Bounded Windows process-tree cancellation** (`src/adapters/shared/process-tree.ts`)
    - `createChildTerminator` keeps the exact POSIX `SIGTERM` -> `SIGKILL` behavior
      and, on Windows, runs `taskkill /T /F /PID <pid>` with a numeric pid (no
      shell interpolation of untrusted text). Each call has a five-second timeout,
@@ -48,13 +69,13 @@ All of the following are covered by automated tests. The `windows-latest` job in
      fail or time out, it force-kills the immediate child. Both drivers cancel and
      dispose through the terminator. Covered by `tests/process-tree.test.ts`.
 
-5. **`pnpm.cmd`-safe dev launcher** (`scripts/dev.mjs`)
+7. **`pnpm.cmd`-safe dev launcher** (`scripts/dev.mjs`)
    - Package-manager invocations run through `shell: true` so `pnpm.cmd` resolves
      on Windows. Covered by `tests/dev-launcher.test.ts`.
 
-6. **Windows CI** (`.github/workflows/ci.yml`, `windows` job)
-   - Runs `pnpm typecheck`, `pnpm build`, and the five platform-portable test
-     files above on `windows-latest`.
+8. **Windows CI** (`.github/workflows/ci.yml`, `windows` job)
+   - Runs `pnpm typecheck`, `pnpm build`, the five platform unit files, and both
+     stdin prompt regressions on `windows-latest`.
 
 ## What this milestone does NOT prove (needs clean-Windows validation)
 
@@ -62,31 +83,19 @@ These items require a real, packaged Windows runtime and are the documented
 remaining steps for the full port. The spike intentionally does not pretend they
 passed.
 
-### A. Delivering `ELECTRON_RUN_AS_NODE` to the bundled adapter on Windows
+### A. Packaged Electron-as-Node launcher behavior
 
-On POSIX, `buildAdapterLauncherTokens` scopes `ELECTRON_RUN_AS_NODE=1` to the
-adapter child via a leading `env KEY=VALUE` prefix in the command string. There
-is no `env` command on Windows, and acpx's registry override is a single command
-**string** that acpx reparses - it has no structured `{ executable, args, env }`
-surface and it builds the child environment from the host's `process.env`
-(plus auth), so env cannot be injected through the command string either.
-
-Consequence: on Windows, `buildAdapterLauncherTokens` omits the env and the
-launch command is just `<executable> <adapter-path>` (correctly quoted). The
-command string is correct, but running the bundled Electron binary as Node
-requires the env var, which means a small launcher is needed.
+The launcher and its acpx command wiring are implemented and covered by
+cross-platform unit tests. A real packaged runtime is still needed to validate
+the Electron/Windows process boundary rather than only the host-side contract.
 
 **Remaining clean-Windows validation step:**
-1. Author a minimal Windows launcher (a `.cmd` shim that sets
-   `ELECTRON_RUN_AS_NODE=1` and execs the bundled Electron with the adapter
-   path, or a tiny launcher executable), pointed at by
-   `buildAdapterLauncherTokens` on `win32`.
-2. On a clean Windows 11 x64 VM, build a temporary packaged Electron app under a
+1. On a clean Windows 11 x64 VM, build a temporary packaged Electron app under a
    `C:\Program Files\...` path with spaces/non-ASCII, and prove
-   Electron-as-Node launches one bundled ACP adapter with the env set safely and
-   ACP stdout uncontaminated.
-3. Prove `splitAcpxCommand` of the produced `launchCommand` reparses to the exact
-   launcher + adapter tokens (extend `tests/launch-command.test.ts`).
+   Electron-as-Node launches both bundled ACP adapters with the env scoped to
+   each child and ACP stdout uncontaminated.
+2. Confirm the launcher exits with each adapter's status and leaves no
+   intermediate launcher process after a normal ACP shutdown.
 
 Do not claim the Windows adapter launch works until this passes on a real
 packaged install. Setting `ELECTRON_RUN_AS_NODE` globally in the Electron main
@@ -106,28 +115,15 @@ children must be observed on Windows.
 2. Assert no `claude*`, `codex*`, `node`, or tool-process descendant survives
    (e.g. via `tasklist` after the turn settles).
 
-### C. `shell: true` + prompt-as-argv hardening
+### C. The broader test suite on Windows
 
-The drivers pass the user prompt as a trailing positional argv
-(`claude -p <prompt>`, `codex exec <prompt>`). On Windows, `.cmd` shims require
-`shell: true`, under which Node's argv quoting is not fully injection-proof
-against cmd.exe metacharacters (`&`, `|`, `%`). This is a pre-existing driver
-design surfaced by the Windows port.
-
-**Remaining hardening step (full port):** move prompt delivery off the argv
-(over stdin, mirroring how acpx itself carries prompts), or sanitize/quoting-
-harden the prompt path. Out of scope for this first milestone; flagged here so it
-is not lost.
-
-### D. The broader test suite on Windows
-
-The `windows` CI job intentionally runs only the five platform-portable unit
-files. Many other specs execute `/bin/bash`/`/bin/sh`, rely on Unix fixtures
+The `windows` CI job intentionally runs only the platform-portable unit files
+and prompt transport regressions. Many other specs execute `/bin/bash`/`/bin/sh`, rely on Unix fixtures
 (shebangs, `chmod`, symlinks), or are explicitly `skipIf(win32)`. Porting the
 core ACP/change-session e2e to Windows (removing the win32 skips in
 `tests/e2e-acp-runtime.test.ts`) is not done here.
 
-### E. Out of scope for this milestone entirely
+### D. Out of scope for this milestone entirely
 
 None of the following are in this milestone: tray polish/assets,
 `.ico`, AppUserModelID, single-instance lock, NSIS installer, Authenticode

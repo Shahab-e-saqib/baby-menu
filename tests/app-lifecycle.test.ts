@@ -9,6 +9,7 @@ const trayInstance = {
 const electronApp = {
   commandLine: { appendSwitch: vi.fn() },
   dock: { hide: vi.fn() },
+  getAppPath: vi.fn(() => "/repo"),
   getPath: vi.fn((name: string) => (name === "home" ? "/home/test-user" : "/tmp")),
   getVersion: vi.fn(() => "0.0.0-test"),
   getLoginItemSettings: vi.fn(() => ({ openAtLogin: false })),

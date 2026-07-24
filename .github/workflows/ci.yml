@@ -86,4 +86,6 @@ jobs:
         run: pnpm build
 
       - name: Platform-safe unit tests
-        run: pnpm vitest run tests/shell-path.test.ts tests/launch-command.test.ts tests/platform-spawn.test.ts tests/process-tree.test.ts tests/dev-launcher.test.ts
+        run: |
+          pnpm vitest run tests/shell-path.test.ts tests/launch-command.test.ts tests/platform-spawn.test.ts tests/process-tree.test.ts tests/dev-launcher.test.ts
+          pnpm vitest run tests/adapter-claude-driver.test.ts tests/adapter-codex-driver.test.ts -t "delivers shell metacharacter prompts verbatim over stdin"

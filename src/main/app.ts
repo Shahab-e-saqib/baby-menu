@@ -26,19 +26,32 @@ import { expandProcessPathForGuiLaunch } from "./shell-path";
 import { buildAdapterLauncherTokens } from "./launch-command";
 import { createUpdateChecker } from "./update-checker";
 import { createBabyMenuTray, type BabyMenuTray } from "./tray";
+import {
+  parseWindowsAdapterLaunchRequest,
+  runWindowsAdapterLauncher,
+} from "./windows-adapter-launcher";
 import { createLayoutModuleRegistry, createWidgetModuleRegistry } from "./widget-module-registry";
 import { registerBabyMenuProtocolHandlers, registerBabyMenuProtocolSchemes } from "./widget-protocol";
 
-if (process.platform === "darwin") {
+const windowsAdapterLaunchRequest = parseWindowsAdapterLaunchRequest();
+
+if (!windowsAdapterLaunchRequest && process.platform === "darwin") {
   app.commandLine.appendSwitch("use-mock-keychain");
 }
 
 const remoteDebuggingPort = Number(process.env.BABY_MENU_REMOTE_DEBUGGING_PORT);
-if (Number.isInteger(remoteDebuggingPort) && remoteDebuggingPort >= 1 && remoteDebuggingPort <= 65_535) {
+if (
+  !windowsAdapterLaunchRequest &&
+  Number.isInteger(remoteDebuggingPort) &&
+  remoteDebuggingPort >= 1 &&
+  remoteDebuggingPort <= 65_535
+) {
   app.commandLine.appendSwitch("remote-debugging-port", String(remoteDebuggingPort));
 }
 
-registerBabyMenuProtocolSchemes();
+if (!windowsAdapterLaunchRequest) {
+  registerBabyMenuProtocolSchemes();
+}
 
 let popoverWindow: BrowserWindow | null = null;
 let activeTray: BabyMenuTray | null = null;
@@ -187,13 +200,13 @@ export async function startBabyMenuApp(): Promise<void> {
   // adapters. Run them with the bundled Electron as Node (ELECTRON_RUN_AS_NODE)
   // so there is no dependency on a separately-installed `node` - the same class
   // of PATH fragility that made the agent look "unavailable" before.
-  // buildAdapterLauncherTokens scopes that env var to the child on POSIX via a
-  // leading `env` prefix. On Windows there is no `env` command, so the token is
-  // the executable only and `ELECTRON_RUN_AS_NODE` delivery is a documented
-  // clean-Windows validation step (a launcher); see launch-command.ts.
   const adapterLauncher = buildAdapterLauncherTokens({
     executable: process.execPath,
     env: { ELECTRON_RUN_AS_NODE: "1" },
+    windowsAppPath:
+      process.platform === "win32" && !app.isPackaged
+        ? app.getAppPath()
+        : undefined,
   });
   // The catalog is a live runtime service: it owns agents.json and pushes
   // rebuilt registry overrides into the runtime so UI-added custom agents apply
@@ -339,9 +352,19 @@ export async function startBabyMenuApp(): Promise<void> {
 }
 
 if (!process.env.VITEST) {
-  // Last-resort guard: an unhandled rejection here would otherwise leave a dead
-  // app with a lingering dock icon and no tray, with no diagnostic in the logs.
-  startBabyMenuApp().catch((error) => {
-    console.error("[baby-menu] fatal startup error", error);
-  });
+  if (windowsAdapterLaunchRequest) {
+    void runWindowsAdapterLauncher(windowsAdapterLaunchRequest).then(
+      (exitCode) => app.exit(exitCode),
+      (error) => {
+        console.error("[baby-menu] Windows adapter launcher failed", error);
+        app.exit(1);
+      },
+    );
+  } else {
+    // Last-resort guard: an unhandled rejection here would otherwise leave a dead
+    // app with a lingering dock icon and no tray, with no diagnostic in the logs.
+    startBabyMenuApp().catch((error) => {
+      console.error("[baby-menu] fatal startup error", error);
+    });
+  }
 }

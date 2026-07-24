@@ -1,12 +1,17 @@
 import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { existsSync, watch } from "node:fs";
 import { describe, expect, it, afterEach } from "vitest";
 import { ClaudeDriver } from "../src/adapters/claude/driver";
 import type * as schema from "@agentclientprotocol/sdk";
 
-const FAKE = join(__dirname, "fixtures", "fake-clis", "fake-claude.mjs");
+const FAKE = join(
+  __dirname,
+  "fixtures",
+  "fake-clis",
+  process.platform === "win32" ? "fake-claude.cmd" : "fake-claude.mjs",
+);
 
 function waitForFile(path: string): Promise<void> {
   if (existsSync(path)) return Promise.resolve();
@@ -54,6 +59,28 @@ describe("ClaudeDriver (against a fake claude CLI)", () => {
     expect(updates.find((u) => u.sessionUpdate === "agent_message_chunk")).toMatchObject({
       content: { type: "text", text: "echo:hello" },
     });
+  });
+
+  it("delivers shell metacharacter prompts verbatim over stdin", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "claude-stdin-"));
+    const argsFile = join(dir, "args.json");
+    const injectedFile = join(dir, "injected");
+    const text = `literal & | %\n"quoted"\n& echo injected > "${injectedFile}" &`;
+    process.env.FAKE_CLAUDE_ARGS_FILE = argsFile;
+    try {
+      const d = makeDriver();
+      await d.start(tmpdir());
+      const updates: schema.SessionUpdate[] = [];
+      await d.prompt(text, (update) => updates.push(update), new AbortController().signal);
+
+      expect(updates.find((update) => update.sessionUpdate === "agent_message_chunk")).toMatchObject({
+        content: { type: "text", text: `echo:${text}` },
+      });
+      expect(JSON.parse(await readFile(argsFile, "utf8")) as string[]).not.toContain(text);
+      expect(existsSync(injectedFile)).toBe(false);
+    } finally {
+      delete process.env.FAKE_CLAUDE_ARGS_FILE;
+    }
   });
 
   it("resumes the session on the second prompt (carries memory)", async () => {
