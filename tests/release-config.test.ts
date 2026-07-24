@@ -1,11 +1,75 @@
 import { execFile } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import packageJson from "../package.json";
 import { describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
+
+async function releaseDraftGuard(): Promise<string> {
+  const workflow = await readFile(resolve(import.meta.dirname, "../.github/workflows/release-please.yml"), "utf8");
+  const match = workflow.match(/- name: Verify release is still draft\n[\s\S]*?        run: \|\n(?<script>(?: {10}.*\n)+)/);
+  if (!match?.groups?.script) {
+    throw new Error("Could not find the release draft guard in the release workflow");
+  }
+  return match.groups.script.replace(/^ {10}/gm, "");
+}
+
+async function runReleaseDraftGuard(releaseState: "true" | "false" | "missing" | "query-error") {
+  const tempDirectory = await mkdtemp(join(tmpdir(), "baby-menu-release-guard-"));
+  const ghPath = join(tempDirectory, "gh");
+  await writeFile(
+    ghPath,
+    `#!/bin/sh\ncase "$*" in\n  *releases/tags/*) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;\nesac\nif [ "$GH_RELEASE_STATE" = "query-error" ]; then echo "gh: API unavailable (HTTP 503)" >&2; exit 1; fi\nif [ "$GH_RELEASE_STATE" != "missing" ]; then printf '%s\\n' "$GH_RELEASE_STATE"; fi\n`,
+  );
+  await chmod(ghPath, 0o755);
+
+  try {
+    return await execFileAsync("/bin/bash", ["-c", await releaseDraftGuard()], {
+      env: {
+        ...process.env,
+        GITHUB_REPOSITORY: "kunchenguid/baby-menu",
+        TAG_NAME: "baby-menu-v0.1.23",
+        GH_RELEASE_STATE: releaseState,
+        PATH: `${tempDirectory}:${process.env.PATH ?? ""}`,
+      },
+    });
+  } finally {
+    await rm(tempDirectory, { recursive: true, force: true });
+  }
+}
+
+describe("release draft guard", () => {
+  it("passes when the tagged release exists as a draft", async () => {
+    await expect(runReleaseDraftGuard("true")).resolves.toBeDefined();
+  });
+
+  it("refuses when the tagged release is already published", async () => {
+    await expect(runReleaseDraftGuard("false")).rejects.toMatchObject({
+      stderr: expect.stringContaining(
+        "Refusing to build artifacts for a release that is already public: baby-menu-v0.1.23",
+      ),
+    });
+  });
+
+  it("fails distinctly when no release exists for the tag", async () => {
+    await expect(runReleaseDraftGuard("missing")).rejects.toMatchObject({
+      stderr: expect.stringContaining(
+        "No GitHub release exists for tag baby-menu-v0.1.23; refusing to build artifacts.",
+      ),
+    });
+  });
+
+  it("fails explicitly when GitHub release state cannot be queried", async () => {
+    await expect(runReleaseDraftGuard("query-error")).rejects.toMatchObject({
+      stderr: expect.stringContaining(
+        "Unable to verify draft status for baby-menu-v0.1.23; GitHub release query failed: gh: API unavailable (HTTP 503)",
+      ),
+    });
+  });
+});
 
 describe("distribution config", () => {
   it("adds mac packaging scripts and keeps TypeScript available at runtime for extension compilation", () => {
@@ -88,8 +152,14 @@ describe("distribution config", () => {
     expect(workflow).toContain("baby-menu-release-created: ${{ steps.release.outputs.release_created }}");
     expect(workflow).toContain("baby-menu-tag-name: ${{ steps.release.outputs.tag_name }}");
     expect(workflow).toContain("baby-menu-version: ${{ steps.release.outputs.version }}");
-    expect(workflow).toContain("if: ${{ needs.release-please.outputs.baby-menu-release-created == 'true' }}");
-    expect(workflow).toContain("ref: ${{ env.TAG_NAME }}");
+    expect(workflow).toContain("github.event_name == 'workflow_dispatch'");
+    expect(workflow).toContain("needs.release-please.outputs.baby-menu-release-created == 'true'");
+    expect(workflow).toContain("group: ${{ github.workflow }}-macos-${{ inputs.tag_name");
+    expect(workflow).toContain("cancel-in-progress: false");
+    expect(workflow).toContain("ref: refs/tags/${{ env.TAG_NAME }}");
+    expect(workflow).toContain('if [ "$TAG_NAME" != "baby-menu-v0.1.23" ] || [ "$VERSION" != "0.1.23" ]');
+    expect(workflow).toContain('EXPECTED_COMMIT="a8fd9cf3cda01277358a8b5e225e2ace7b0c0593"');
+    expect(workflow).toContain('ACTUAL_COMMIT="$(git rev-parse HEAD)"');
     expect(workflow).toContain("TEAM_ID: 9T2J7MNUP9");
     expect(workflow).toContain("BUNDLE_ID: com.kunchenguid.baby-menu");
     for (const secret of [
@@ -147,7 +217,20 @@ describe("distribution config", () => {
     expect(workflow).toContain('ARCHITECTURES" != "arm64 x86_64"');
 
     expect(workflow).toContain("Verify release is still draft");
-    expect(workflow).toContain('gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG_NAME}" --jq .draft');
+    expect(workflow).toContain('gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100"');
+    expect(workflow).not.toContain('releases/tags/${TAG_NAME}');
+    expect(workflow).toContain("workflow_dispatch:");
+    expect(workflow).toContain("tag_name:");
+    expect(workflow).toContain("version:");
+
+    const recoveryTargetIndex = workflow.indexOf("Validate manual recovery target");
+    const checkoutIndex = workflow.indexOf("actions/checkout@v6");
+    const recoveryCommitIndex = workflow.indexOf("Verify manual recovery commit");
+    const credentialsIndex = workflow.indexOf("Restore App Store Connect API key");
+    expect(recoveryTargetIndex).toBeGreaterThan(-1);
+    expect(checkoutIndex).toBeGreaterThan(recoveryTargetIndex);
+    expect(recoveryCommitIndex).toBeGreaterThan(checkoutIndex);
+    expect(credentialsIndex).toBeGreaterThan(recoveryCommitIndex);
 
     const verifyIndex = workflow.indexOf("Verify publication-ready signed and notarized DMG");
     const runtimeE2eIndex = workflow.indexOf('node scripts/e2e-packaged-mac-app.mjs "$APP_PATH"');
