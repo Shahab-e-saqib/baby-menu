@@ -9,7 +9,11 @@ const trayInstance = {
 const electronApp = {
   commandLine: { appendSwitch: vi.fn() },
   dock: { hide: vi.fn() },
-  getPath: vi.fn((name: string) => (name === "home" ? "/home/test-user" : "/tmp")),
+  getPath: vi.fn((name: string): string => {
+    if (name === "home") return "/home/test-user";
+    if (name === "exe") return "/tmp/Baby Menu Dev.app/Contents/MacOS/Baby Menu Dev";
+    return "/tmp";
+  }),
   getVersion: vi.fn(() => "0.0.0-test"),
   getLoginItemSettings: vi.fn(() => ({ openAtLogin: false })),
   setLoginItemSettings: vi.fn(),
@@ -130,6 +134,11 @@ describe("startBabyMenuApp", () => {
     vi.clearAllMocks();
     vi.resetModules();
     electronApp.isPackaged = false;
+    electronApp.getPath.mockImplementation((name: string) => {
+      if (name === "home") return "/home/test-user";
+      if (name === "exe") return "/tmp/Baby Menu Dev.app/Contents/MacOS/Baby Menu Dev";
+      return "/tmp";
+    });
     browserWindowInstance.isDestroyed.mockReturnValue(false);
     browserWindowInstance.isVisible.mockReturnValue(false);
     trayInstance.getBounds.mockReturnValue({ x: 100, y: 10, width: 24, height: 24 });
@@ -328,8 +337,34 @@ describe("startBabyMenuApp", () => {
     expect(electronApp.setLoginItemSettings).not.toHaveBeenCalled();
   });
 
-  it("opts packaged app launches into opening at login by default", async () => {
+  it.each(["Baby Menu Dev", "Baby Menu Test"])(
+    "does not touch login items for the packaged %s bundle",
+    async (appName) => {
+      electronApp.isPackaged = true;
+      electronApp.getPath.mockImplementation((name: string) => {
+        if (name === "home") return "/home/test-user";
+        if (name === "exe") return `/tmp/${appName}.app/Contents/MacOS/${appName}`;
+        return "/tmp";
+      });
+      Object.defineProperty(process, "resourcesPath", {
+        configurable: true,
+        value: `/tmp/${appName}.app/Contents/Resources`,
+      });
+      const appModule = await import("../src/main/app");
+
+      await appModule.startBabyMenuApp();
+
+      expect(electronApp.setLoginItemSettings).not.toHaveBeenCalled();
+    },
+  );
+
+  it("opts the packaged production app into opening at login by default", async () => {
     electronApp.isPackaged = true;
+    electronApp.getPath.mockImplementation((name: string) => {
+      if (name === "home") return "/home/test-user";
+      if (name === "exe") return "/Applications/Baby Menu.app/Contents/MacOS/Baby Menu";
+      return "/tmp";
+    });
     Object.defineProperty(process, "resourcesPath", {
       configurable: true,
       value: "/Applications/Baby Menu.app/Contents/Resources",
