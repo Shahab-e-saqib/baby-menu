@@ -4,7 +4,7 @@ import { AdapterTurnError, type SessionDriver, type UpdateSink } from "../shared
 import { LineReader } from "../shared/line-reader.js";
 import { logDebug, logError } from "../shared/log.js";
 import { childEnv } from "../shared/child-env.js";
-import { resolveDriverCommand, driverSpawnOptions } from "../shared/platform-spawn.js";
+import { resolveDriverSpawn } from "../shared/platform-spawn.js";
 import { createChildTerminator } from "../shared/process-tree.js";
 import { mapCodexEvent, type CodexExecEvent } from "./mapper.js";
 
@@ -82,15 +82,13 @@ export class CodexDriver implements SessionDriver {
       : ["exec", ...common, "--color", "never"];
 
     logDebug(SCOPE, "spawn", this.command, args.join(" "), "<prompt via stdin>");
-    // On Windows the agent CLI is usually a `.cmd` shim; resolveDriverCommand
-    // applies PATHEXT and driverSpawnOptions sets `shell: true` for `.cmd`/`.bat`
-    // so Node can launch it. Other commands spawn directly.
-    const command = resolveDriverCommand(this.command);
-    const child = spawn(command, args, {
+    const env = childEnv();
+    const launch = resolveDriverSpawn(this.command, { env });
+    const child = spawn(launch.command, args, {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
-      env: childEnv(),
-      ...driverSpawnOptions(this.command),
+      env: { ...env, ...launch.env },
+      ...launch.options,
     });
     this.child = child;
     const terminator = createChildTerminator(child);

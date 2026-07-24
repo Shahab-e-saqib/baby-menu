@@ -1,5 +1,15 @@
+import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { resolveDriverCommand, driverSpawnOptions } from "../src/adapters/shared/platform-spawn";
+import {
+  driverSpawnOptions,
+  quoteWindowsBatchExecutable,
+  resolveDriverCommand,
+  resolveDriverSpawn,
+  WINDOWS_BATCH_EXECUTABLE_ENV,
+} from "../src/adapters/shared/platform-spawn";
 
 // A fake Windows filesystem: only the listed absolute paths "exist".
 function fakeExists(existing: Set<string>) {
@@ -98,4 +108,78 @@ describe("driverSpawnOptions", () => {
     const exists = fakeExists(new Set());
     expect(driverSpawnOptions("claude", { platform: "win32", env: WIN_ENV, existsSync: exists })).toEqual({});
   });
+});
+
+describe("resolveDriverSpawn", () => {
+  it("preserves the POSIX command and direct-spawn options", () => {
+    expect(resolveDriverSpawn("/usr/local/bin/claude", { platform: "darwin" })).toEqual({
+      command: "/usr/local/bin/claude",
+      options: {},
+    });
+  });
+
+  it("gives a resolved batch executable its own cmd.exe quoting boundary", () => {
+    const command = "C:\\Users\\First Last\\%Tools% & More\\claude.cmd";
+    const env = {
+      PATHEXT: ".CMD;.EXE",
+      PATH: "C:\\Users\\First Last\\%Tools% & More",
+    };
+    const exists = fakeExists(new Set([command]));
+
+    expect(resolveDriverSpawn("claude", { platform: "win32", env, existsSync: exists })).toEqual({
+      command: `"%${WINDOWS_BATCH_EXECUTABLE_ENV}%"`,
+      options: { shell: true },
+      env: { [WINDOWS_BATCH_EXECUTABLE_ENV]: command },
+    });
+  });
+
+  it("quotes explicit batch paths and leaves native executables direct", () => {
+    expect(quoteWindowsBatchExecutable("C:\\Program Files\\agent.bat")).toBe(
+      '"C:\\Program Files\\agent.bat"',
+    );
+    expect(
+      resolveDriverSpawn("C:\\Program Files\\agent.exe", {
+        platform: "win32",
+        existsSync: fakeExists(new Set(["C:\\Program Files\\agent.exe"])),
+      }),
+    ).toEqual({
+      command: "C:\\Program Files\\agent.exe",
+      options: {},
+    });
+  });
+
+  it.skipIf(process.platform !== "win32")(
+    "launches a batch executable from a path with spaces and cmd metacharacters",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "baby-menu-batch-"));
+      const commandDir = join(root, "First Last", "%Tools% & More");
+      const command = join(commandDir, "agent.cmd");
+      await mkdir(commandDir, { recursive: true });
+      await writeFile(command, "@echo off\r\necho launched\r\n");
+
+      try {
+        const launch = resolveDriverSpawn(command, { platform: "win32" });
+        const output = await new Promise<string>((resolve, reject) => {
+          const child = spawn(launch.command, [], {
+            env: { ...process.env, ...launch.env },
+            stdio: ["ignore", "pipe", "pipe"],
+            ...launch.options,
+          });
+          let stdout = "";
+          child.stdout.setEncoding("utf8");
+          child.stdout.on("data", (chunk: string) => {
+            stdout += chunk;
+          });
+          child.once("error", reject);
+          child.once("close", (code) => {
+            if (code === 0) resolve(stdout);
+            else reject(new Error(`batch fixture exited ${code ?? "unknown"}`));
+          });
+        });
+        expect(output.trim()).toBe("launched");
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
 });

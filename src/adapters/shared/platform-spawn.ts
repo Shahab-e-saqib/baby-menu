@@ -73,6 +73,36 @@ export type DriverSpawnOptionsResult = {
   shell?: boolean;
 };
 
+export type DriverSpawnSpec = {
+  command: string;
+  options: DriverSpawnOptionsResult;
+  env?: NodeJS.ProcessEnv;
+};
+
+export const WINDOWS_BATCH_EXECUTABLE_ENV = "BABY_MENU_DRIVER_BATCH_EXECUTABLE";
+
+export function quoteWindowsBatchExecutable(command: string): string {
+  return `"${command}"`;
+}
+
+export function resolveDriverSpawn(
+  command: string,
+  options: ResolveCommandOptions = {},
+): DriverSpawnSpec {
+  const platform = options.platform ?? process.platform;
+  const resolved = resolveDriverCommand(command, options);
+  if (platform !== "win32") return { command: resolved, options: {} };
+  const ext = win32Path.extname(resolved).toLowerCase();
+  if (ext === ".cmd" || ext === ".bat") {
+    return {
+      command: quoteWindowsBatchExecutable(`%${WINDOWS_BATCH_EXECUTABLE_ENV}%`),
+      options: { shell: true },
+      env: { [WINDOWS_BATCH_EXECUTABLE_ENV]: resolved },
+    };
+  }
+  return { command: resolved, options: {} };
+}
+
 /**
  * Returns the spawn options needed to launch `command` on the current platform.
  * `.cmd`/`.bat` shims require `shell: true` on Windows; everything else (native
@@ -83,9 +113,5 @@ export function driverSpawnOptions(
   command: string,
   options: { platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; existsSync?: (path: string) => boolean } = {},
 ): DriverSpawnOptionsResult {
-  const platform = options.platform ?? process.platform;
-  if (platform !== "win32") return {};
-  const resolved = resolveDriverCommand(command, options);
-  const ext = win32Path.extname(resolved).toLowerCase();
-  return ext === ".cmd" || ext === ".bat" ? { shell: true } : {};
+  return resolveDriverSpawn(command, options).options;
 }

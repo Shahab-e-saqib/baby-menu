@@ -1,5 +1,12 @@
 import { spawn, type SpawnOptions } from "node:child_process";
 import {
+  createChildTerminator,
+  TERMINATION_GRACE_MS,
+  type ChildTerminator,
+  type TerminableChild,
+} from "../adapters/shared/process-tree";
+import { ADAPTER_LAUNCHER_PID_ENV } from "../adapters/shared/launcher-lifecycle";
+import {
   WINDOWS_ADAPTER_LAUNCHER_SEPARATOR,
   WINDOWS_ADAPTER_LAUNCHER_SWITCH,
 } from "./launch-command";
@@ -9,7 +16,7 @@ export type WindowsAdapterLaunchRequest = {
   env: NodeJS.ProcessEnv;
 };
 
-type LauncherChild = {
+type LauncherChild = TerminableChild & {
   once(event: "error", listener: (error: Error) => void): LauncherChild;
   once(
     event: "close",
@@ -22,6 +29,19 @@ type SpawnLauncher = (
   args: string[],
   options: SpawnOptions,
 ) => LauncherChild;
+
+type LauncherLifecycle = {
+  once(event: string, listener: () => void): unknown;
+  off(event: string, listener: () => void): unknown;
+};
+
+type ScheduleForce = (callback: () => void) => () => void;
+
+function scheduleForce(callback: () => void): () => void {
+  const timer = setTimeout(callback, TERMINATION_GRACE_MS);
+  timer.unref();
+  return () => clearTimeout(timer);
+}
 
 export function parseWindowsAdapterLaunchRequest(
   argv: readonly string[] = process.argv,
@@ -58,18 +78,70 @@ export async function runWindowsAdapterLauncher(
     executable?: string;
     baseEnv?: NodeJS.ProcessEnv;
     spawnProcess?: SpawnLauncher;
+    launcherPid?: number;
+    lifecycle?: LauncherLifecycle;
+    createTerminator?: (child: TerminableChild) => ChildTerminator;
+    scheduleForce?: ScheduleForce;
   } = {},
 ): Promise<number> {
   const executable = options.executable ?? process.execPath;
-  const spawnProcess = options.spawnProcess ?? spawn;
+  const spawnProcess: SpawnLauncher =
+    options.spawnProcess ??
+    ((command, args, spawnOptions) =>
+      spawn(command, args, spawnOptions) as LauncherChild);
+  const launcherPid = options.launcherPid ?? process.pid;
   const child = spawnProcess(executable, [request.adapterPath], {
-    env: { ...(options.baseEnv ?? process.env), ...request.env },
+    env: {
+      ...(options.baseEnv ?? process.env),
+      ...request.env,
+      [ADAPTER_LAUNCHER_PID_ENV]: String(launcherPid),
+    },
     stdio: "inherit",
     windowsHide: true,
   });
+  const terminator =
+    options.createTerminator?.(child) ??
+    createChildTerminator(child, { strategy: "windows-taskkill" });
+  const lifecycle =
+    options.lifecycle ??
+    (process as unknown as LauncherLifecycle);
+  const scheduleTerminationForce = options.scheduleForce ?? scheduleForce;
+  const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+  let settled = false;
+  let terminating = false;
+  let cancelForce: (() => void) | null = null;
+
+  const onSignal = () => {
+    if (settled || terminating) return;
+    terminating = true;
+    terminator.terminate();
+    cancelForce = scheduleTerminationForce(() => terminator.force());
+  };
+  const onExit = () => {
+    if (!settled) terminator.force();
+  };
+  const cleanup = () => {
+    cancelForce?.();
+    for (const signal of signals) lifecycle.off(signal, onSignal);
+    lifecycle.off("exit", onExit);
+  };
+
+  for (const signal of signals) lifecycle.once(signal, onSignal);
+  lifecycle.once("exit", onExit);
 
   return new Promise<number>((resolve, reject) => {
-    child.once("error", reject);
-    child.once("close", (code) => resolve(code ?? 1));
+    child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      terminator.force();
+      reject(error);
+    });
+    child.once("close", (code) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(code ?? 1);
+    });
   });
 }

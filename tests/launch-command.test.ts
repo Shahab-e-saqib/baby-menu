@@ -13,6 +13,7 @@ import {
   parseWindowsAdapterLaunchRequest,
   runWindowsAdapterLauncher,
 } from "../src/main/windows-adapter-launcher";
+import { ADAPTER_LAUNCHER_PID_ENV } from "../src/adapters/shared/launcher-lifecycle";
 
 // The whole point of this file: a constructed launch command MUST round-trip
 // through acpx's own splitCommandLine into the exact tokens the host intended.
@@ -264,8 +265,16 @@ describe("Windows adapter launcher", () => {
   });
 
   it("spawns Electron-as-Node with inherited ACP stdio and scoped environment", async () => {
-    const child = new EventEmitter();
+    const child = Object.assign(new EventEmitter(), {
+      pid: 9001,
+      kill: vi.fn(() => true),
+    });
+    const lifecycle = new EventEmitter();
     const spawnProcess = vi.fn(() => child as never);
+    const createTerminator = vi.fn(() => ({
+      terminate: vi.fn(),
+      force: vi.fn(),
+    }));
     const launch = runWindowsAdapterLauncher(
       {
         adapterPath: "C:/Program Files/Baby Menu 日本語/out/adapters/codex/index.mjs",
@@ -275,6 +284,9 @@ describe("Windows adapter launcher", () => {
         executable: "C:/Program Files/Baby Menu 日本語/Baby Menu.exe",
         baseEnv: { SYSTEMROOT: "C:\\Windows" },
         spawnProcess,
+        launcherPid: 4242,
+        lifecycle: lifecycle as never,
+        createTerminator,
       },
     );
 
@@ -287,10 +299,80 @@ describe("Windows adapter launcher", () => {
         env: {
           SYSTEMROOT: "C:\\Windows",
           ELECTRON_RUN_AS_NODE: "1",
+          [ADAPTER_LAUNCHER_PID_ENV]: "4242",
         },
         stdio: "inherit",
         windowsHide: true,
       },
     );
+    expect(createTerminator).toHaveBeenCalledWith(child);
+  });
+
+  it("forwards launcher shutdown through bounded child-tree termination", async () => {
+    const child = Object.assign(new EventEmitter(), {
+      pid: 9001,
+      kill: vi.fn(() => true),
+    });
+    const lifecycle = new EventEmitter();
+    const terminator = {
+      terminate: vi.fn(),
+      force: vi.fn(),
+    };
+    let force!: () => void;
+    const cancelForce = vi.fn();
+    const launch = runWindowsAdapterLauncher(
+      {
+        adapterPath: "C:/app/out/adapters/claude/index.mjs",
+        env: { ELECTRON_RUN_AS_NODE: "1" },
+      },
+      {
+        executable: "C:/app/Baby Menu.exe",
+        spawnProcess: vi.fn(() => child as never),
+        lifecycle: lifecycle as never,
+        createTerminator: () => terminator,
+        scheduleForce: (callback) => {
+          force = callback;
+          return cancelForce;
+        },
+      },
+    );
+
+    lifecycle.emit("SIGTERM");
+    expect(terminator.terminate).toHaveBeenCalledTimes(1);
+    force();
+    expect(terminator.force).toHaveBeenCalledTimes(1);
+
+    child.emit("close", 0, null);
+    await expect(launch).resolves.toBe(0);
+    expect(cancelForce).toHaveBeenCalledTimes(1);
+  });
+
+  it("force-terminates the child tree if the launcher exits first", async () => {
+    const child = Object.assign(new EventEmitter(), {
+      pid: 9001,
+      kill: vi.fn(() => true),
+    });
+    const lifecycle = new EventEmitter();
+    const terminator = {
+      terminate: vi.fn(),
+      force: vi.fn(),
+    };
+    const launch = runWindowsAdapterLauncher(
+      {
+        adapterPath: "C:/app/out/adapters/codex/index.mjs",
+        env: { ELECTRON_RUN_AS_NODE: "1" },
+      },
+      {
+        executable: "C:/app/Baby Menu.exe",
+        spawnProcess: vi.fn(() => child as never),
+        lifecycle: lifecycle as never,
+        createTerminator: () => terminator,
+      },
+    );
+
+    lifecycle.emit("exit");
+    expect(terminator.force).toHaveBeenCalledTimes(1);
+    child.emit("close", 1, null);
+    await expect(launch).resolves.toBe(1);
   });
 });

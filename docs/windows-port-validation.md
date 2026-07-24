@@ -30,6 +30,9 @@ All of the following are covered by automated tests. The `windows-latest` job in
      launcher mode. Packaged commands launch the installed executable directly.
      `tests/launch-command.test.ts` proves both built-in agents carry the
      launcher, scoped environment, and exact adapter path.
+   - Launcher shutdown forwards through the bounded Windows tree terminator. The
+     adapter also watches the launcher PID and disposes its CLI tree if forced
+     outer-process termination prevents Electron cleanup from running.
 
 3. **Correctly-quoted bundled-adapter launch path** (`src/main/launch-command.ts`)
    - `quoteLaunchToken` / `joinLaunchCommand` build a launch-command string that
@@ -54,10 +57,13 @@ All of the following are covered by automated tests. The `windows-latest` job in
 
 5. **PATHEXT / `.cmd`-aware native agent launching** (`src/adapters/shared/platform-spawn.ts`)
    - `resolveDriverCommand` resolves a bare command to its `.cmd` shim via
-     PATHEXT and PATH search (mirrors acpx's own resolution); `driverSpawnOptions`
-     sets `shell: true` for `.cmd`/`.bat` shims so Node can launch them. Both
-     drivers (`claude`, `codex`) now resolve and spawn through these helpers.
-     Covered by `tests/platform-spawn.test.ts`.
+     PATHEXT and PATH search (mirrors acpx's own resolution).
+     `resolveDriverSpawn` carries `.cmd`/`.bat` paths through a child-scoped
+     environment value and invokes a fixed, independently quoted cmd.exe token
+     before enabling `shell: true`. Paths with spaces, percent expansions, and
+     shell metacharacters never become raw command text. Both drivers resolve
+     and spawn through the same helper. Covered by
+     `tests/platform-spawn.test.ts`.
 
 6. **Bounded Windows process-tree cancellation** (`src/adapters/shared/process-tree.ts`)
    - `createChildTerminator` keeps the exact POSIX `SIGTERM` -> `SIGKILL` behavior
@@ -94,8 +100,8 @@ the Electron/Windows process boundary rather than only the host-side contract.
    `C:\Program Files\...` path with spaces/non-ASCII, and prove
    Electron-as-Node launches both bundled ACP adapters with the env scoped to
    each child and ACP stdout uncontaminated.
-2. Confirm the launcher exits with each adapter's status and leaves no
-   intermediate launcher process after a normal ACP shutdown.
+2. Confirm the launcher exits with each adapter's status and leaves no launcher,
+   adapter, or CLI descendant after normal and forced ACP shutdown.
 
 Do not claim the Windows adapter launch works until this passes on a real
 packaged install. Setting `ELECTRON_RUN_AS_NODE` globally in the Electron main
@@ -118,10 +124,10 @@ children must be observed on Windows.
 ### C. The broader test suite on Windows
 
 The `windows` CI job intentionally runs only the platform-portable unit files
-and prompt transport regressions. Many other specs execute `/bin/bash`/`/bin/sh`, rely on Unix fixtures
-(shebangs, `chmod`, symlinks), or are explicitly `skipIf(win32)`. Porting the
-core ACP/change-session e2e to Windows (removing the win32 skips in
-`tests/e2e-acp-runtime.test.ts`) is not done here.
+and prompt transport regressions. Many other specs execute `/bin/bash`/`/bin/sh`,
+rely on Unix fixtures (shebangs, `chmod`, symlinks), or are explicitly
+`skipIf(win32)`. Porting the core ACP/change-session e2e to Windows (removing the
+win32 skips in `tests/e2e-acp-runtime.test.ts`) is not done here.
 
 ### D. Out of scope for this milestone entirely
 

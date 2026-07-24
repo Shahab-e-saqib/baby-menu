@@ -7,6 +7,11 @@ import {
   taskkillArgs,
   type TerminableChild,
 } from "../src/adapters/shared/process-tree";
+import {
+  ADAPTER_LAUNCHER_PID_ENV,
+  ADAPTER_LAUNCHER_WATCH_INTERVAL_MS,
+  startAdapterLauncherWatchdog,
+} from "../src/adapters/shared/launcher-lifecycle";
 
 // A minimal stand-in for a Node ChildProcess: records the signals it received.
 function fakeChild(pid?: number) {
@@ -129,5 +134,73 @@ describe("createChildTerminator (windows-taskkill)", () => {
 
     expect(runTaskkill).toHaveBeenCalledTimes(TASKKILL_MAX_ATTEMPTS);
     expect(kills).toEqual(["SIGKILL"]);
+  });
+});
+
+describe("adapter launcher watchdog", () => {
+  it("does not install a parent watchdog on POSIX", () => {
+    const schedule = vi.fn();
+    startAdapterLauncherWatchdog(vi.fn(), {
+      platform: "darwin",
+      env: { [ADAPTER_LAUNCHER_PID_ENV]: "4242" },
+      schedule,
+    });
+    expect(schedule).not.toHaveBeenCalled();
+  });
+
+  it("shuts down once when the Windows launcher process disappears", () => {
+    let tick!: () => void;
+    const timer = { unref: vi.fn() };
+    const schedule = vi.fn((callback: () => void) => {
+      tick = callback;
+      return timer;
+    });
+    const cancel = vi.fn();
+    const isProcessAlive = vi.fn()
+      .mockReturnValueOnce(true)
+      .mockReturnValue(false);
+    const onLauncherExit = vi.fn();
+
+    startAdapterLauncherWatchdog(onLauncherExit, {
+      platform: "win32",
+      env: { [ADAPTER_LAUNCHER_PID_ENV]: "4242" },
+      isProcessAlive,
+      schedule,
+      cancel,
+    });
+
+    expect(schedule).toHaveBeenCalledWith(
+      expect.any(Function),
+      ADAPTER_LAUNCHER_WATCH_INTERVAL_MS,
+    );
+    expect(timer.unref).toHaveBeenCalledTimes(1);
+    tick();
+    expect(onLauncherExit).not.toHaveBeenCalled();
+    tick();
+    tick();
+    expect(onLauncherExit).toHaveBeenCalledTimes(1);
+    expect(cancel).toHaveBeenCalledWith(timer);
+  });
+
+  it("stops monitoring when the adapter shuts down normally", () => {
+    let tick!: () => void;
+    const timer = { unref: vi.fn() };
+    const cancel = vi.fn();
+    const onLauncherExit = vi.fn();
+    const stop = startAdapterLauncherWatchdog(onLauncherExit, {
+      platform: "win32",
+      env: { [ADAPTER_LAUNCHER_PID_ENV]: "4242" },
+      isProcessAlive: () => false,
+      schedule: (callback) => {
+        tick = callback;
+        return timer;
+      },
+      cancel,
+    });
+
+    stop();
+    tick();
+    expect(cancel).toHaveBeenCalledWith(timer);
+    expect(onLauncherExit).not.toHaveBeenCalled();
   });
 });
