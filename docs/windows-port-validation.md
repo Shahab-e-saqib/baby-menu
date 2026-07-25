@@ -2,10 +2,8 @@
 
 This document records what the **first Windows-port milestone** implements, what
 it deliberately proves, and - crucially - what it does **not** claim to prove.
-The remaining proofs require a clean, packaged Windows environment that this
-milestone's CI does not exercise. Treat anything below marked "needs
-clean-Windows validation" as **not yet shipped for Windows**, even though the
-host-side plumbing is in place.
+Treat anything below marked "needs clean-Windows validation" as **not yet
+shipped for Windows**, even though the host-side plumbing is in place.
 
 ## What this milestone implements and validates automatically
 
@@ -83,6 +81,48 @@ All of the following are covered by automated tests. The `windows-latest` job in
    - Runs `pnpm typecheck`, `pnpm build`, the five platform unit files, and both
      stdin prompt regressions on `windows-latest`.
 
+## Manual Windows 11 validation (2026-07-24)
+
+A focused manual check ran on Windows 11 Home x64 (build 26200) through the
+host's WSL interop. The unsigned x64 `win-unpacked` app used Electron 42.2.0
+(Electron-as-Node reported Node 24.15.0). The package and every test artifact
+stayed in the disposable worktree; Windows accessed it through
+`\\wsl.localhost\Ubuntu\...`, temporarily mapped to a drive by `pushd`.
+
+The difficult-path fixtures were `Windows Package 测试 & (x64)` for the app and
+`Agent Bin & (测试)` for `codex.cmd`. The host had no native Windows Node or agent
+installation, so the project-local `.cmd` fixture delegated to the real,
+already-authenticated Codex CLI 0.145.0 in WSL. Authentication and runtime state
+were copied into the ignored worktree evidence directory for the check; no
+credential value or raw provider response was captured.
+
+The following checks passed against the unpacked production artifacts:
+
+1. Running the packaged executable with `ELECTRON_RUN_AS_NODE=1` reported
+   `win32`, Node 24.15.0, and Electron 42.2.0.
+2. The unpacked `out/adapters/codex/index.mjs` completed an ACP protocol-v1
+   initialize/new-session/prompt exchange through that executable and the real
+   `.cmd` boundary.
+3. A four-line prompt containing `& | < > ^ %`, quotes, parentheses, and a
+   command-shaped redirection string returned exactly `WINDOWS_PROMPT_OK`,
+   stopped with `end_turn`, and did not create the injection sentinel.
+4. The CLI fixture recorded `ELECTRON_RUN_AS_NODE` as unset, proving the adapter
+   removed the child-only Electron mode before starting the real CLI.
+5. A second turn started a real `sleep 120` descendant, then received
+   `session/cancel`. The turn stopped as `cancelled`; the observed WSL
+   Node/Codex/sleep processes and Windows `wsl.exe` chain were all gone after
+   cancellation, and the adapter exited 0. The normal completed turn also left
+   no marked Windows or WSL process.
+
+This directly validates the packaged Electron-as-Node child, difficult-path
+`.cmd` execution, prompt transport, and Windows tree cancellation. It does not
+validate the outer packaged GUI launcher: Windows recorded Application Error
+1000 (`0x80000003`) when Electron GUI mode ran from the WSL network share,
+before Baby Menu's main JavaScript started. The same executable and adapter
+worked in Electron-as-Node mode. The worktree boundary prohibited copying the
+package to local NTFS to distinguish Electron's network-share limitation from
+installed-app behavior, so the outer-launcher item below remains open.
+
 ## What this milestone does NOT prove (needs clean-Windows validation)
 
 These items require a real, packaged Windows runtime and are the documented
@@ -92,16 +132,17 @@ passed.
 ### A. Packaged Electron-as-Node launcher behavior
 
 The launcher and its acpx command wiring are implemented and covered by
-cross-platform unit tests. A real packaged runtime is still needed to validate
-the Electron/Windows process boundary rather than only the host-side contract.
+cross-platform unit tests. The manual check above validates the packaged
+Electron-as-Node child but not the outer Electron GUI process that creates it.
+A package on local NTFS is still needed to validate that final process boundary.
 
 **Remaining clean-Windows validation step:**
-1. On a clean Windows 11 x64 VM, build a temporary packaged Electron app under a
-   `C:\Program Files\...` path with spaces/non-ASCII, and prove
-   Electron-as-Node launches both bundled ACP adapters with the env scoped to
-   each child and ACP stdout uncontaminated.
-2. Confirm the launcher exits with each adapter's status and leaves no launcher,
-   adapter, or CLI descendant after normal and forced ACP shutdown.
+1. On a clean Windows 11 x64 VM, place a temporary packaged Electron app on
+   local NTFS under a path with spaces/non-ASCII, and drive the outer
+   `--baby-menu-electron-node-launcher` process through ACP.
+2. Prove both bundled adapters start with the env scoped to each child, ACP
+   stdout stays uncontaminated, launcher exit statuses propagate, and no outer
+   launcher or adapter survives normal and forced ACP shutdown.
 
 Do not claim the Windows adapter launch works until this passes on a real
 packaged install. Setting `ELECTRON_RUN_AS_NODE` globally in the Electron main
@@ -109,17 +150,18 @@ process was considered and rejected as too broad: it would propagate to every
 host child (git, taskkill probes, background-task shells) even though most ignore
 it, and it could not be validated here.
 
-### B. Real `.cmd` cancellation leaves zero descendants
+### B. Native Windows agent credentials and `.cmd` cancellation
 
-`taskkill /T /F /PID <pid>` is the correct, bounded tree kill, but its
-effectiveness against a real `claude.cmd`/`codex.cmd` shim and the CLI's tool
-children must be observed on Windows.
+The manual check above proves `taskkill /T /F /PID <pid>` removes a real
+project-local `codex.cmd` process tree, including the authenticated Codex CLI and
+a live tool descendant reached through `wsl.exe`. A native Windows agent
+installation was not available on this host.
 
 **Remaining clean-Windows validation step:**
-1. On the clean VM, drive one real prompt through each adapter and cancel/timeout
-   it mid-turn.
-2. Assert no `claude*`, `codex*`, `node`, or tool-process descendant survives
-   (e.g. via `tasklist` after the turn settles).
+1. On the clean VM, drive one real prompt through each natively installed
+   supported agent and cancel/timeout it mid-turn.
+2. Assert no native `claude*`, `codex*`, `node`, or tool-process descendant
+   survives (e.g. via `tasklist` after the turn settles).
 
 ### C. The broader test suite on Windows
 
