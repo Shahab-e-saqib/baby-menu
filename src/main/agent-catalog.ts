@@ -145,9 +145,10 @@ export function resolveAgentCatalog(options: ResolveAgentCatalogOptions = {}): A
  * untouched.
  *
  * The resulting string is built with `joinLaunchCommand`, which quotes each
- * token so acpx's `splitCommandLine` reparses it verbatim on every platform -
- * including Windows install paths containing spaces, backslashes, `&`,
- * parentheses, and non-ASCII characters (see launch-command.ts).
+ * token so acpx's `splitCommandLine` reparses it without splitting or character
+ * loss. Windows backslashes are first normalized to forward slashes, including
+ * in install paths containing spaces, `&`, parentheses, and non-ASCII characters
+ * (see launch-command.ts).
  */
 export function withAdapterLaunchCommands(
   catalog: readonly AgentDefinition[],

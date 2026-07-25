@@ -15,7 +15,7 @@ export type BabyMenuRuntimePaths = {
   bundledExtensionTemplateDir: string | null;
   trayIconPath: string;
   databasePath: string;
-  /** Directory holding the bundled clean-room ACP adapters (out/adapters/<name>/index.js). */
+  /** Directory holding the bundled clean-room ACP adapters (out/adapters/<name>/index.mjs). */
   adaptersDir: string;
   isPackaged: boolean;
 };

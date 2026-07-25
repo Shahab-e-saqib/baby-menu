@@ -1,7 +1,7 @@
 // Bundles the clean-room ACP adapters into self-contained JS files under
-// out/adapters/. Each adapter is spawned by acpx as a separate `node <file>`
-// process and speaks ACP over stdio, so it must carry its own dependencies
-// (@agentclientprotocol/sdk + zod) - a standalone node process cannot require
+// out/adapters/. Each adapter runs as a separate Electron-as-Node process and
+// speaks ACP over stdio, so it must carry its own dependencies
+// (@agentclientprotocol/sdk + zod) - a standalone Node process cannot require
 // modules from inside the packaged app.asar. esbuild bundles everything except
 // Node built-ins into one file per adapter.
 import { build } from "esbuild";

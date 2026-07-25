@@ -39,8 +39,8 @@ All of the following are covered by automated tests. The `windows-latest` job in
      non-ASCII text. Backslashes are normalized to forward slashes
      (parser-safe and Windows-usable by `spawn`/`fs`/acpx).
    - `splitAcpxCommand` is a faithful port of the pinned acpx parser, exported
-     so tests prove the constructed string reparses into the exact intended
-     tokens - without needing a Windows host. Covered by
+     so tests prove the constructed string reparses into the intended,
+     slash-normalized tokens - without needing a Windows host. Covered by
      `tests/launch-command.test.ts`, including the confirmed backslash-stripping
      defect as a regression anchor.
 

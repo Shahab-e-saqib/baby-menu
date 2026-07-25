@@ -9,14 +9,15 @@
 //     and `\x` -> `x` inside double quotes, which strips every backslash from a
 //     quoted `C:\Program Files\...` path),
 //   - preserves everything literally inside single quotes.
-// There is no structured `{ executable, args, env }` override surface, so the only
-// way to carry a Windows install path (spaces, backslashes, `&`, parens, non-ASCII)
-// through to the spawn is to build a string this parser round-trips exactly.
+// There is no structured `{ executable, args, env }` override surface, so a
+// Windows install path (spaces, backslashes, `&`, parens, non-ASCII) must be
+// slash-normalized and quoted into a string this parser can round-trip without
+// splitting or character loss.
 //
 // `splitAcpxCommand` below is a faithful port of that parser. It is exported so
-// tests can PROVE a constructed command string reparses into the exact tokens the
-// host intended - without needing a Windows host or a packaged runtime. Keep it in
-// lockstep with the pinned acpx parser.
+// tests can prove a constructed command string reparses into the host's intended
+// tokens (after Windows slash normalization) without needing a Windows host or a
+// packaged runtime. Keep it in lockstep with the pinned acpx parser.
 
 /** Splits a value on the configured delimiter, tolerating an empty string. */
 function splitOn(value: string, delimiter: string): string[] {
@@ -74,10 +75,11 @@ function needsQuoting(token: string): boolean {
 }
 
 /**
- * Quotes a single command token so `splitAcpxCommand` reparses it to the exact
- * original value. Bare tokens (no whitespace/quote/backslash) are returned as-is,
- * which is why POSIX macOS paths without those characters stay unquoted and the
- * existing macOS launch strings are byte-identical.
+ * Quotes a single command token so `splitAcpxCommand` reparses it to the intended
+ * launch value. POSIX tokens round-trip exactly. Bare tokens (no
+ * whitespace/quote/backslash) are returned as-is, which is why POSIX macOS paths
+ * without those characters stay unquoted and the existing macOS launch strings
+ * are byte-identical.
  *
  * Windows paths contain backslashes, which acpx strips inside double quotes.
  * Rather than escape every backslash (`\\`), Windows backslashes are normalized
