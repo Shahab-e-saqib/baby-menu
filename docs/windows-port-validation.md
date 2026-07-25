@@ -58,9 +58,9 @@ All of the following are covered by automated tests. The `windows-latest` job in
      PATHEXT and PATH search (mirrors acpx's own resolution).
      `resolveDriverSpawn` carries `.cmd`/`.bat` paths through a child-scoped
      environment value and invokes a fixed, independently quoted cmd.exe token
-     before enabling `shell: true`. Paths with spaces, percent expansions, and
-     shell metacharacters never become raw command text. Both drivers resolve
-     and spawn through the same helper. Covered by
+     before enabling `shell: true` with `windowsHide: true`. Paths with spaces,
+     percent expansions, and shell metacharacters never become raw command text.
+     Both drivers resolve and spawn through the same helper. Covered by
      `tests/platform-spawn.test.ts`.
 
 6. **Bounded Windows process-tree cancellation** (`src/adapters/shared/process-tree.ts`)
@@ -77,9 +77,18 @@ All of the following are covered by automated tests. The `windows-latest` job in
    - Package-manager invocations run through `shell: true` so `pnpm.cmd` resolves
      on Windows. Covered by `tests/dev-launcher.test.ts`.
 
-8. **Windows CI** (`.github/workflows/ci.yml`, `windows` job)
-   - Runs `pnpm typecheck`, `pnpm build`, the five platform unit files, and both
-     stdin prompt regressions on `windows-latest`.
+8. **Windows package native dependencies** (`pnpm-workspace.yaml`,
+   `tests/windows-packaging.test.ts`)
+   - The dependency install retains the `win32` optional packages required by a
+     Windows build, including `lightningcss-win32-x64-msvc`.
+   - Windows CI builds an x64 `win-unpacked` package and asserts that
+     `lightningcss.win32-x64-msvc.node` is inside the packaged
+     `resources/app.asar.unpacked` tree.
+
+9. **Windows CI** (`.github/workflows/ci.yml`, `windows` job)
+   - Runs `pnpm typecheck`, `pnpm build`, the five platform unit files, both
+     stdin prompt regressions, and the package-content assertion on
+     `windows-latest`.
 
 ## Manual Windows 11 validation (2026-07-24)
 
@@ -96,32 +105,37 @@ already-authenticated Codex CLI 0.145.0 in WSL. Authentication and runtime state
 were copied into the ignored worktree evidence directory for the check; no
 credential value or raw provider response was captured.
 
-The following checks passed against the unpacked production artifacts:
+The first GUI package was assembled from a Linux dependency tree that omitted
+the optional `lightningcss-win32-x64-msvc` package. It crashed before Baby
+Menu's main process reached the adapter launcher because the main import chain
+loads `@tailwindcss/postcss` and `lightningcss`. Reinstalling with the Windows
+optional dependency and repackaging removed that startup failure. The committed
+`supportedArchitectures` configuration now retains `win32` dependencies, and
+Windows CI guards the packaged binary itself rather than only the install tree.
 
-1. Running the packaged executable with `ELECTRON_RUN_AS_NODE=1` reported
+The following checks then passed against the unpacked production artifacts:
+
+1. The packaged GUI started on Windows and reached Baby Menu's main process.
+2. Running the packaged executable with `ELECTRON_RUN_AS_NODE=1` reported
    `win32`, Node 24.15.0, and Electron 42.2.0.
-2. The unpacked `out/adapters/codex/index.mjs` completed an ACP protocol-v1
+3. The unpacked `out/adapters/codex/index.mjs` completed an ACP protocol-v1
    initialize/new-session/prompt exchange through that executable and the real
    `.cmd` boundary.
-3. A four-line prompt containing `& | < > ^ %`, quotes, parentheses, and a
+4. A four-line prompt containing `& | < > ^ %`, quotes, parentheses, and a
    command-shaped redirection string returned exactly `WINDOWS_PROMPT_OK`,
    stopped with `end_turn`, and did not create the injection sentinel.
-4. The CLI fixture recorded `ELECTRON_RUN_AS_NODE` as unset, proving the adapter
+5. The CLI fixture recorded `ELECTRON_RUN_AS_NODE` as unset, proving the adapter
    removed the child-only Electron mode before starting the real CLI.
-5. A second turn started a real `sleep 120` descendant, then received
+6. A second turn started a real `sleep 120` descendant, then received
    `session/cancel`. The turn stopped as `cancelled`; the observed WSL
    Node/Codex/sleep processes and Windows `wsl.exe` chain were all gone after
    cancellation, and the adapter exited 0. The normal completed turn also left
    no marked Windows or WSL process.
 
-This directly validates the packaged Electron-as-Node child, difficult-path
-`.cmd` execution, prompt transport, and Windows tree cancellation. It does not
-validate the outer packaged GUI launcher: Windows recorded Application Error
-1000 (`0x80000003`) when Electron GUI mode ran from the WSL network share,
-before Baby Menu's main JavaScript started. The same executable and adapter
-worked in Electron-as-Node mode. The worktree boundary prohibited copying the
-package to local NTFS to distinguish Electron's network-share limitation from
-installed-app behavior, so the outer-launcher item below remains open.
+This directly validates packaged GUI startup, the packaged Electron-as-Node
+child, difficult-path `.cmd` execution, prompt transport, and Windows tree
+cancellation. Driving both adapters through the outer GUI launcher's ACP
+boundary remains a separate clean-Windows validation item below.
 
 ## What this milestone does NOT prove (needs clean-Windows validation)
 
@@ -132,13 +146,13 @@ passed.
 ### A. Packaged Electron-as-Node launcher behavior
 
 The launcher and its acpx command wiring are implemented and covered by
-cross-platform unit tests. The manual check above validates the packaged
-Electron-as-Node child but not the outer Electron GUI process that creates it.
-A package on local NTFS is still needed to validate that final process boundary.
+cross-platform unit tests. The manual check above validates packaged GUI startup
+and the packaged Electron-as-Node child, but not a complete ACP exchange driven
+through the outer GUI process that creates it.
 
 **Remaining clean-Windows validation step:**
-1. On a clean Windows 11 x64 VM, place a temporary packaged Electron app on
-   local NTFS under a path with spaces/non-ASCII, and drive the outer
+1. On a clean Windows 11 x64 VM, place a temporary packaged Electron app under
+   a path with spaces/non-ASCII, and drive the outer
    `--baby-menu-electron-node-launcher` process through ACP.
 2. Prove both bundled adapters start with the env scoped to each child, ACP
    stdout stays uncontaminated, launcher exit statuses propagate, and no outer

@@ -5,7 +5,7 @@
 // Kept in sync with tests/fixtures/protocols/codex/exec-*.jsonl.
 // Special SLOW_* prompts are test controls for cancellation and child-process
 // termination behavior rather than captured protocol fixtures.
-import { existsSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, writeFileSync } from "node:fs";
 
 const emit = (obj) => process.stdout.write(JSON.stringify(obj) + "\n");
 
@@ -14,6 +14,20 @@ const argv = process.argv.slice(2);
 // (e.g. --model). Overwritten on every invocation, so the last turn wins.
 if (process.env.FAKE_CODEX_ARGS_FILE) {
   writeFileSync(process.env.FAKE_CODEX_ARGS_FILE, JSON.stringify(argv));
+}
+if (process.env.FAKE_CODEX_STDIN_FAILURE_GATE) {
+  const { readyFile, terminatedFile, releaseFile } = JSON.parse(process.env.FAKE_CODEX_STDIN_FAILURE_GATE);
+  let terminating = false;
+  process.on("SIGTERM", () => {
+    terminating = true;
+    writeFileSync(terminatedFile, "");
+  });
+  closeSync(0);
+  writeFileSync(readyFile, "");
+  setInterval(() => {
+    if (existsSync(releaseFile)) process.exit(terminating ? 0 : 2);
+  }, 5);
+  await new Promise(() => {});
 }
 const isResume = argv[0] === "exec" && argv[1] === "resume";
 process.stdin.setEncoding("utf8");

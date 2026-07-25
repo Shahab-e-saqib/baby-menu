@@ -38,6 +38,24 @@ async function slowCancelGate(): Promise<{ prompt: string; terminated: Promise<v
   return { prompt: `SLOW_CANCEL:${sentinel}:${terminated}`, terminated: waitForFile(terminated), release: () => writeFile(sentinel, "") };
 }
 
+async function stdinFailureGate(): Promise<{
+  value: string;
+  ready: Promise<void>;
+  terminated: Promise<void>;
+  release: () => Promise<void>;
+}> {
+  const dir = await mkdtemp(join(tmpdir(), "claude-stdin-failure-"));
+  const readyFile = join(dir, "stdin-closed");
+  const terminatedFile = join(dir, "observed-sigterm");
+  const releaseFile = join(dir, "release-exit");
+  return {
+    value: JSON.stringify({ readyFile, terminatedFile, releaseFile }),
+    ready: waitForFile(readyFile),
+    terminated: waitForFile(terminatedFile),
+    release: () => writeFile(releaseFile, ""),
+  };
+}
+
 describe("ClaudeDriver (against a fake claude CLI)", () => {
   let driver: ClaudeDriver | null = null;
   afterEach(async () => {
@@ -123,6 +141,40 @@ describe("ClaudeDriver (against a fake claude CLI)", () => {
     const ac = new AbortController();
     ac.abort();
     expect(await d.prompt("hi", () => {}, ac.signal)).toBe("cancelled");
+  });
+
+  it.skipIf(process.platform === "win32")("retains and terminates the child after stdin fails", async () => {
+    const d = makeDriver();
+    await d.start(tmpdir());
+    const gate = await stdinFailureGate();
+    process.env.FAKE_CLAUDE_STDIN_FAILURE_GATE = gate.value;
+    try {
+      let settled = false;
+      const outcome = d.prompt("x".repeat(4 * 1024 * 1024), () => {}, new AbortController().signal).then(
+        (result) => {
+          settled = true;
+          return result;
+        },
+        (error: unknown) => {
+          settled = true;
+          return error;
+        },
+      );
+      await gate.ready;
+      await gate.terminated;
+      expect(settled).toBe(false);
+      await expect(d.prompt("second", () => {}, new AbortController().signal)).rejects.toThrow(
+        "a prompt is already in progress",
+      );
+      await gate.release();
+      expect(await outcome).toMatchObject({
+        code: "CLI_START_FAILED",
+        message: "Claude CLI could not receive the prompt.",
+      });
+    } finally {
+      delete process.env.FAKE_CLAUDE_STDIN_FAILURE_GATE;
+      await gate.release();
+    }
   });
 
   it("waits for the child process to exit before resolving cancellation", async () => {

@@ -71,6 +71,7 @@ export function resolveDriverCommand(command: string, options: ResolveCommandOpt
 export type DriverSpawnOptionsResult = {
   /** Set to true so Node launches a .cmd/.bat shim through cmd.exe on Windows. */
   shell?: boolean;
+  windowsHide?: boolean;
 };
 
 export type DriverSpawnSpec = {
@@ -96,7 +97,7 @@ export function resolveDriverSpawn(
   if (ext === ".cmd" || ext === ".bat") {
     return {
       command: quoteWindowsBatchExecutable(`%${WINDOWS_BATCH_EXECUTABLE_ENV}%`),
-      options: { shell: true },
+      options: { shell: true, windowsHide: true },
       env: { [WINDOWS_BATCH_EXECUTABLE_ENV]: resolved },
     };
   }

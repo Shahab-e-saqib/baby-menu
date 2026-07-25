@@ -6,13 +6,27 @@
 // tests/fixtures/protocols/claude/*.jsonl.
 // Special SLOW_* prompts are test controls for cancellation and child-process
 // termination behavior rather than captured protocol fixtures.
-import { existsSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, writeFileSync } from "node:fs";
 
 const emit = (obj) => process.stdout.write(JSON.stringify(obj) + "\n");
 
 const argv = process.argv.slice(2);
 if (process.env.FAKE_CLAUDE_ARGS_FILE) {
   writeFileSync(process.env.FAKE_CLAUDE_ARGS_FILE, JSON.stringify(argv));
+}
+if (process.env.FAKE_CLAUDE_STDIN_FAILURE_GATE) {
+  const { readyFile, terminatedFile, releaseFile } = JSON.parse(process.env.FAKE_CLAUDE_STDIN_FAILURE_GATE);
+  let terminating = false;
+  process.on("SIGTERM", () => {
+    terminating = true;
+    writeFileSync(terminatedFile, "");
+  });
+  closeSync(0);
+  writeFileSync(readyFile, "");
+  setInterval(() => {
+    if (existsSync(releaseFile)) process.exit(terminating ? 0 : 2);
+  }, 5);
+  await new Promise(() => {});
 }
 const resumeIdx = argv.indexOf("--resume");
 const isResume = resumeIdx >= 0;

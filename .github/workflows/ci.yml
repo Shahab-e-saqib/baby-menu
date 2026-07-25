@@ -60,9 +60,9 @@ jobs:
     # This foundation gate is intentionally narrower than the Unix suite because
     # many specs use Unix-only fixtures. Scope and remaining packaged-runtime
     # validation are owned by docs/windows-port-validation.md.
-    name: windows / typecheck / build / platform units
+    name: windows / typecheck / build / package / platform units
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v6
@@ -89,3 +89,10 @@ jobs:
         run: |
           pnpm vitest run tests/shell-path.test.ts tests/launch-command.test.ts tests/platform-spawn.test.ts tests/process-tree.test.ts tests/dev-launcher.test.ts
           pnpm vitest run tests/adapter-claude-driver.test.ts tests/adapter-codex-driver.test.ts -t "delivers shell metacharacter prompts verbatim over stdin"
+
+      - name: Package Windows app and verify native runtime
+        shell: pwsh
+        run: |
+          pnpm exec electron-builder --win dir --x64 --config electron-builder.yml --publish never
+          $env:BABY_MENU_WINDOWS_PACKAGE_DIR = (Resolve-Path "release/win-unpacked").Path
+          pnpm vitest run tests/windows-packaging.test.ts

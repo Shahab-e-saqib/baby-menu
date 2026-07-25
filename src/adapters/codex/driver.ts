@@ -98,6 +98,7 @@ export class CodexDriver implements SessionDriver {
       let settled = false;
       let stopReason: schema.StopReason | null = null;
       let terminalError: AdapterTurnError | null = null;
+      let transportError: AdapterTurnError | null = null;
       let cancelled = false;
       let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -122,12 +123,15 @@ export class CodexDriver implements SessionDriver {
         reject(err);
       };
 
+      const terminateChild = () => {
+        terminator.terminate();
+        forceKillTimer ??= setTimeout(() => terminator.force(), TERMINATION_GRACE_MS);
+      };
       const onAbort = () => {
         if (settled || cancelled) return;
         cancelled = true;
         logDebug(SCOPE, "cancel: killing codex exec");
-        terminator.terminate();
-        forceKillTimer = setTimeout(() => terminator.force(), TERMINATION_GRACE_MS);
+        terminateChild();
       };
       this.activeCancel = onAbort;
 
@@ -159,7 +163,9 @@ export class CodexDriver implements SessionDriver {
       child.stderr.setEncoding("utf8");
       child.stderr.on("data", (chunk: string) => logDebug(SCOPE, "stderr", chunk.trimEnd()));
       child.stdin.on("error", () => {
-        if (!cancelled) fail(new AdapterTurnError("CLI_START_FAILED", "Codex CLI could not receive the prompt."));
+        if (settled || cancelled || transportError) return;
+        transportError = new AdapterTurnError("CLI_START_FAILED", "Codex CLI could not receive the prompt.");
+        terminateChild();
       });
       child.on("error", () => {
         if (cancelled) settle("cancelled");
@@ -169,6 +175,10 @@ export class CodexDriver implements SessionDriver {
         logDebug(SCOPE, "codex exec exited", code);
         if (cancelled) {
           settle("cancelled");
+          return;
+        }
+        if (transportError) {
+          fail(transportError);
           return;
         }
         if (terminalError) {

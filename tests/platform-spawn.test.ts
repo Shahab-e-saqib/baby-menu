@@ -87,13 +87,17 @@ describe("driverSpawnOptions", () => {
 
   it("sets shell:true for a resolved .cmd shim on Windows", () => {
     const exists = fakeExists(new Set(["C:\\Users\\dev\\AppData\\Roaming\\npm\\claude.cmd"]));
-    expect(driverSpawnOptions("claude", { platform: "win32", env: WIN_ENV, existsSync: exists })).toEqual({ shell: true });
+    expect(driverSpawnOptions("claude", { platform: "win32", env: WIN_ENV, existsSync: exists })).toEqual({
+      shell: true,
+      windowsHide: true,
+    });
   });
 
   it("sets shell:true for a .bat shim on Windows", () => {
     const exists = fakeExists(new Set(["C:\\bin\\agent.bat"]));
     expect(driverSpawnOptions("C:\\bin\\agent.bat", { platform: "win32", env: WIN_ENV, existsSync: exists })).toEqual({
       shell: true,
+      windowsHide: true,
     });
   });
 
@@ -128,7 +132,7 @@ describe("resolveDriverSpawn", () => {
 
     expect(resolveDriverSpawn("claude", { platform: "win32", env, existsSync: exists })).toEqual({
       command: `"%${WINDOWS_BATCH_EXECUTABLE_ENV}%"`,
-      options: { shell: true },
+      options: { shell: true, windowsHide: true },
       env: { [WINDOWS_BATCH_EXECUTABLE_ENV]: command },
     });
   });

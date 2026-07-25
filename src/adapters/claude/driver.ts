@@ -93,6 +93,7 @@ export class ClaudeDriver implements SessionDriver {
       let settled = false;
       let stopReason: schema.StopReason | null = null;
       let terminalError: AdapterTurnError | null = null;
+      let transportError: AdapterTurnError | null = null;
       let cancelled = false;
       let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -117,12 +118,15 @@ export class ClaudeDriver implements SessionDriver {
         reject(err);
       };
 
+      const terminateChild = () => {
+        terminator.terminate();
+        forceKillTimer ??= setTimeout(() => terminator.force(), TERMINATION_GRACE_MS);
+      };
       const onAbort = () => {
         if (settled || cancelled) return;
         cancelled = true;
         logDebug(SCOPE, "cancel: killing claude");
-        terminator.terminate();
-        forceKillTimer = setTimeout(() => terminator.force(), TERMINATION_GRACE_MS);
+        terminateChild();
       };
       this.activeCancel = onAbort;
 
@@ -147,7 +151,9 @@ export class ClaudeDriver implements SessionDriver {
       child.stderr.setEncoding("utf8");
       child.stderr.on("data", (chunk: string) => logDebug(SCOPE, "stderr", chunk.trimEnd()));
       child.stdin.on("error", () => {
-        if (!cancelled) fail(new AdapterTurnError("CLI_START_FAILED", "Claude CLI could not receive the prompt."));
+        if (settled || cancelled || transportError) return;
+        transportError = new AdapterTurnError("CLI_START_FAILED", "Claude CLI could not receive the prompt.");
+        terminateChild();
       });
       child.on("error", () => {
         if (cancelled) settle("cancelled");
@@ -157,6 +163,10 @@ export class ClaudeDriver implements SessionDriver {
         logDebug(SCOPE, "claude exited", code);
         if (cancelled) {
           settle("cancelled");
+          return;
+        }
+        if (transportError) {
+          fail(transportError);
           return;
         }
         if (terminalError) {
