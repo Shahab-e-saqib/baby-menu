@@ -8,6 +8,11 @@ directories:
 files:
   - out/**
   - package.json
+  # esbuild builds adapters before packaging. At runtime Baby Menu imports only
+  # acpx/runtime, whose published entry cannot reach acpx's CLI-only tsx path;
+  # tests/acpx-runtime-dependencies.test.ts locks that dependency boundary.
+  - '!node_modules/esbuild/**'
+  - '!node_modules/@esbuild/**'
 
 extraResources:
   - from: extensions
@@ -38,7 +43,7 @@ mac:
   entitlements: assets/entitlements.mac.plist
   entitlementsInherit: assets/entitlements.mac.plist
   notarize: true
-  x64ArchFiles: Contents/Resources/app.asar.unpacked/node_modules/{@esbuild/**,esbuild/**,@tailwindcss/oxide-*/**,lightningcss-*/**,lightningcss/**}
+  x64ArchFiles: Contents/Resources/app.asar.unpacked/node_modules/{@tailwindcss/oxide-*/**,lightningcss-*/**,lightningcss/**}
 
 dmg:
   artifactName: Baby-Menu-${version}-universal.dmg

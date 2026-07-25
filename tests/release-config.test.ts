@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -71,6 +71,41 @@ describe("release draft guard", () => {
   });
 });
 
+describe("packaged runtime verification", () => {
+  it("recursively rejects esbuild nested in unpacked dependencies", async () => {
+    const tempDirectory = await mkdtemp(join(tmpdir(), "baby-menu-packaged-esbuild-"));
+    const nestedEsbuildPath = join(
+      tempDirectory,
+      "Baby Menu Dev.app",
+      "Contents",
+      "Resources",
+      "app.asar.unpacked",
+      "node_modules",
+      "acpx",
+      "node_modules",
+      "esbuild",
+    );
+    await mkdir(nestedEsbuildPath, { recursive: true });
+
+    try {
+      const verificationScript = resolve(
+        import.meta.dirname,
+        "../scripts/e2e-packaged-mac-app.mjs",
+      );
+      const invocation = [
+        `import(${JSON.stringify(verificationScript)})`,
+        `.then(({ assertNoPackagedEsbuild }) => assertNoPackagedEsbuild(${JSON.stringify(join(tempDirectory, "Baby Menu Dev.app"))}))`,
+      ].join("");
+      await expect(execFileAsync(process.execPath, ["--input-type=module", "--eval", invocation]))
+        .rejects.toMatchObject({
+          stderr: expect.stringContaining(nestedEsbuildPath),
+        });
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("distribution config", () => {
   it("adds mac packaging scripts and keeps TypeScript available at runtime for extension compilation", () => {
     expect(packageJson.scripts?.["package:mac"]).toContain("electron-builder --mac dir --universal");
@@ -101,6 +136,7 @@ describe("distribution config", () => {
 
   it("configures production Developer ID signing and keeps local packages ad-hoc", async () => {
     const config = await readFile(resolve(import.meta.dirname, "../electron-builder.yml"), "utf8");
+    const electronViteConfig = await readFile(resolve(import.meta.dirname, "../electron.vite.config.ts"), "utf8");
     const devConfig = await readFile(resolve(import.meta.dirname, "../electron-builder.dev.yml"), "utf8");
     const entitlements = await readFile(resolve(import.meta.dirname, "../assets/entitlements.mac.plist"), "utf8");
     const localSigner = await readFile(
@@ -121,6 +157,12 @@ describe("distribution config", () => {
     expect(config).toContain("entitlementsInherit: assets/entitlements.mac.plist");
     expect(config).toContain("notarize: true");
     expect(config).toContain("icon: assets/app-icon.icns");
+    expect(config).toContain("!node_modules/esbuild/**");
+    expect(config).toContain("!node_modules/@esbuild/**");
+    expect(config).not.toMatch(/x64ArchFiles:.*(?:@esbuild|esbuild)/);
+    expect(electronViteConfig).toContain("plugins: [externalizeDepsPlugin()]");
+    expect(electronViteConfig).not.toContain('exclude: ["acpx"]');
+    expect(packageJson.devDependencies?.["@electron/asar"]).toBe("3.4.1");
 
     expect(devConfig).toContain("identity: null");
     expect(devConfig).toContain("notarize: false");
@@ -156,10 +198,14 @@ describe("distribution config", () => {
     expect(workflow).toContain("needs.release-please.outputs.baby-menu-release-created == 'true'");
     expect(workflow).toContain("group: ${{ github.workflow }}-macos-${{ inputs.tag_name");
     expect(workflow).toContain("cancel-in-progress: false");
-    expect(workflow).toContain("ref: refs/tags/${{ env.TAG_NAME }}");
+    expect(workflow).toContain("github.event_name == 'workflow_dispatch' && github.sha || format('refs/tags/{0}', env.TAG_NAME)");
+    expect(workflow).toContain('if [ "$GITHUB_REF" != "refs/heads/main" ]');
     expect(workflow).toContain('if [ "$TAG_NAME" != "baby-menu-v0.1.23" ] || [ "$VERSION" != "0.1.23" ]');
-    expect(workflow).toContain('EXPECTED_COMMIT="a8fd9cf3cda01277358a8b5e225e2ace7b0c0593"');
     expect(workflow).toContain('ACTUAL_COMMIT="$(git rev-parse HEAD)"');
+    expect(workflow).toContain('if [ "$ACTUAL_COMMIT" != "$GITHUB_SHA" ]');
+    expect(workflow).toContain('PACKAGE_VERSION="$(node -p "require(\'./package.json\').version")"');
+    expect(workflow).toContain('if [ "$PACKAGE_VERSION" != "$VERSION" ]');
+    expect(workflow).not.toContain('EXPECTED_COMMIT="a8fd9cf3cda01277358a8b5e225e2ace7b0c0593"');
     expect(workflow).toContain("TEAM_ID: 9T2J7MNUP9");
     expect(workflow).toContain("BUNDLE_ID: com.kunchenguid.baby-menu");
     for (const secret of [
@@ -201,7 +247,8 @@ describe("distribution config", () => {
     expect(workflow).toContain('verify_entitlements "$candidate" x86_64 "$require_jit"');
     expect(workflow).toContain("verify_macho_architectures");
     expect(workflow).toContain('if [ "$architectures" = "arm64 x86_64" ]');
-    expect(workflow).toContain("node_modules/@esbuild/darwin-arm64/bin/esbuild");
+    expect(workflow).not.toContain("node_modules/@esbuild/");
+    expect(workflow).not.toContain("node_modules/esbuild/");
     expect(workflow).toContain("node_modules/@tailwindcss/oxide-darwin-arm64/tailwindcss-oxide.darwin-arm64.node");
     expect(workflow).toContain("node_modules/lightningcss-darwin-arm64/lightningcss.darwin-arm64.node");
     expect(workflow).toContain('if [ ! -f "$counterpart" ]');
@@ -212,6 +259,10 @@ describe("distribution config", () => {
     expect(workflow).toContain('xcrun stapler validate "$APP_PATH"');
     expect(workflow).toContain('xcrun stapler validate "$DMG_PATH"');
     expect(workflow).toContain('node scripts/e2e-packaged-mac-app.mjs "$APP_PATH"');
+    expect(packagedRuntimeE2e).toContain('from "@electron/asar"');
+    expect(packagedRuntimeE2e).toContain("assertNoPackagedEsbuild");
+    expect(packagedRuntimeE2e).toContain("window.babyMenu.agent.send");
+    expect(packagedRuntimeE2e).toContain("agent:prompt:done");
     expect(workflow).toContain("CFBundleShortVersionString");
     expect(workflow).toContain('lipo "$APP_EXECUTABLE" -verify_arch arm64 x86_64');
     expect(workflow).toContain('ARCHITECTURES" != "arm64 x86_64"');
@@ -225,12 +276,12 @@ describe("distribution config", () => {
 
     const recoveryTargetIndex = workflow.indexOf("Validate manual recovery target");
     const checkoutIndex = workflow.indexOf("actions/checkout@v6");
-    const recoveryCommitIndex = workflow.indexOf("Verify manual recovery commit");
+    const recoverySourceIndex = workflow.indexOf("Verify manual recovery source");
     const credentialsIndex = workflow.indexOf("Restore App Store Connect API key");
     expect(recoveryTargetIndex).toBeGreaterThan(-1);
     expect(checkoutIndex).toBeGreaterThan(recoveryTargetIndex);
-    expect(recoveryCommitIndex).toBeGreaterThan(checkoutIndex);
-    expect(credentialsIndex).toBeGreaterThan(recoveryCommitIndex);
+    expect(recoverySourceIndex).toBeGreaterThan(checkoutIndex);
+    expect(credentialsIndex).toBeGreaterThan(recoverySourceIndex);
 
     const verifyIndex = workflow.indexOf("Verify publication-ready signed and notarized DMG");
     const runtimeE2eIndex = workflow.indexOf('node scripts/e2e-packaged-mac-app.mjs "$APP_PATH"');
