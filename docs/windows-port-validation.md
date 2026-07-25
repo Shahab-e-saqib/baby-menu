@@ -134,8 +134,34 @@ The following checks then passed against the unpacked production artifacts:
 
 This directly validates packaged GUI startup, the packaged Electron-as-Node
 child, difficult-path `.cmd` execution, prompt transport, and Windows tree
-cancellation. Driving both adapters through the outer GUI launcher's ACP
-boundary remains a separate clean-Windows validation item below.
+cancellation.
+
+### Outer-launcher follow-up (2026-07-25)
+
+The first complete ACP exchange through
+`--baby-menu-electron-node-launcher` reproduced exit code 3 before initialize.
+The failure was not in ACP or adapter spawning: Chromium repeatedly failed to
+start its GPU process because the unpacked Electron app was running from the
+WSL network share, then terminated the outer process as unusable. Direct
+Electron-as-Node execution never starts Chromium and therefore masked that
+outer-process failure.
+
+The dedicated no-renderer launcher now disables hardware acceleration and keeps
+the disabled GPU fallback in that trusted outer process. The normal GUI process
+is unchanged, and the workaround does not use `--no-sandbox` or disable the
+normal GUI sandbox.
+
+After rebuilding the same unpacked package, the outer launcher completed a real
+Codex ACP initialize/new-session/prompt exchange through the difficult-path
+`.cmd` fixture. The multiline metacharacter prompt arrived verbatim over stdin,
+did not appear in Windows process argv, did not create the injection sentinel,
+and returned exactly `WINDOWS_PROMPT_OK`. A second outer-launcher run started a
+real marked `sleep 120` tool descendant, returned `cancelled` after
+`session/cancel`, and left no marked Windows, WSL, Codex, or sleep process.
+
+This follow-up does not claim installer, signing, native-local-drive, or Claude
+validation. Driving both bundled adapters from a short native Windows path
+remains a clean-Windows item below.
 
 ## What this milestone does NOT prove (needs clean-Windows validation)
 
@@ -146,23 +172,23 @@ passed.
 ### A. Packaged Electron-as-Node launcher behavior
 
 The launcher and its acpx command wiring are implemented and covered by
-cross-platform unit tests. The manual check above validates packaged GUI startup
-and the packaged Electron-as-Node child, but not a complete ACP exchange driven
-through the outer GUI process that creates it.
+cross-platform unit tests. The manual follow-up above validates a complete Codex
+ACP exchange, cancellation, and teardown through the outer GUI process from the
+WSL network share. It does not validate the equivalent Claude path or a package
+copied to a native local drive.
 
 **Remaining clean-Windows validation step:**
 1. On a clean Windows 11 x64 VM, place a temporary packaged Electron app under
-   a path with spaces/non-ASCII, and drive the outer
-   `--baby-menu-electron-node-launcher` process through ACP.
-2. Prove both bundled adapters start with the env scoped to each child, ACP
-   stdout stays uncontaminated, launcher exit statuses propagate, and no outer
-   launcher or adapter survives normal and forced ACP shutdown.
+   a path with spaces/non-ASCII on a short native local drive, and drive both
+   bundled adapters through the outer `--baby-menu-electron-node-launcher`
+   process over ACP.
+2. Confirm the WSL-proven child-env scoping, clean ACP stdout, launcher exit
+   propagation, and normal/forced teardown for both native agent installations.
 
-Do not claim the Windows adapter launch works until this passes on a real
-packaged install. Setting `ELECTRON_RUN_AS_NODE` globally in the Electron main
-process was considered and rejected as too broad: it would propagate to every
-host child (git, taskkill probes, background-task shells) even though most ignore
-it, and it could not be validated here.
+Do not claim both Windows adapter launches work from a native packaged install
+until this passes. Setting `ELECTRON_RUN_AS_NODE` globally in the Electron main
+process remains rejected as too broad: it would propagate to every host child
+(git, taskkill probes, background-task shells) even though most ignore it.
 
 ### B. Native Windows agent credentials and `.cmd` cancellation
 

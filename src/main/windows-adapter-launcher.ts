@@ -37,6 +37,20 @@ type LauncherLifecycle = {
 
 type ScheduleForce = (callback: () => void) => () => void;
 
+export function prepareWindowsAdapterLauncher(app: {
+  disableHardwareAcceleration(): void;
+  commandLine: { appendSwitch(switchName: string): void };
+}): void {
+  // This process only forwards ACP stdio to an Electron-as-Node child. Starting
+  // a sandboxed GPU child is unnecessary and fails for Electron apps launched
+  // from Windows network shares (including WSL paths). Keep the disabled GPU
+  // fallback in this trusted, no-renderer launcher process so ACP can start
+  // without weakening the sandbox used by the normal GUI process.
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch("in-process-gpu");
+  app.commandLine.appendSwitch("disable-gpu");
+}
+
 function scheduleForce(callback: () => void): () => void {
   const timer = setTimeout(callback, TERMINATION_GRACE_MS);
   timer.unref();

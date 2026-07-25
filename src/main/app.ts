@@ -28,12 +28,17 @@ import { createUpdateChecker } from "./update-checker";
 import { createBabyMenuTray, type BabyMenuTray } from "./tray";
 import {
   parseWindowsAdapterLaunchRequest,
+  prepareWindowsAdapterLauncher,
   runWindowsAdapterLauncher,
 } from "./windows-adapter-launcher";
 import { createLayoutModuleRegistry, createWidgetModuleRegistry } from "./widget-module-registry";
 import { registerBabyMenuProtocolHandlers, registerBabyMenuProtocolSchemes } from "./widget-protocol";
 
 const windowsAdapterLaunchRequest = parseWindowsAdapterLaunchRequest();
+
+if (windowsAdapterLaunchRequest) {
+  prepareWindowsAdapterLauncher(app);
+}
 
 if (!windowsAdapterLaunchRequest && process.platform === "darwin") {
   app.commandLine.appendSwitch("use-mock-keychain");

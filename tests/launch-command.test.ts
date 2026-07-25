@@ -11,6 +11,7 @@ import {
 import { withAdapterLaunchCommands, DEFAULT_AGENTS } from "../src/main/agent-catalog";
 import {
   parseWindowsAdapterLaunchRequest,
+  prepareWindowsAdapterLauncher,
   runWindowsAdapterLauncher,
 } from "../src/main/windows-adapter-launcher";
 import { ADAPTER_LAUNCHER_PID_ENV } from "../src/adapters/shared/launcher-lifecycle";
@@ -241,6 +242,20 @@ describe("withAdapterLaunchCommands (Windows quoting)", () => {
 });
 
 describe("Windows adapter launcher", () => {
+  it("avoids a sandboxed GPU child in the headless outer process", () => {
+    const disableHardwareAcceleration = vi.fn();
+    const appendSwitch = vi.fn();
+
+    prepareWindowsAdapterLauncher({
+      disableHardwareAcceleration,
+      commandLine: { appendSwitch },
+    });
+
+    expect(disableHardwareAcceleration).toHaveBeenCalledTimes(1);
+    expect(appendSwitch).toHaveBeenCalledWith("in-process-gpu");
+    expect(appendSwitch).toHaveBeenCalledWith("disable-gpu");
+  });
+
   it("parses the adapter path and child environment after acpx round-tripping", () => {
     const adapterPath =
       "C:\\Program Files\\Baby Menu 日本語\\resources\\app.asar.unpacked\\out\\adapters\\claude\\index.mjs";
