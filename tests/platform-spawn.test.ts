@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   quoteWindowsBatchArgument,
@@ -193,12 +193,12 @@ describe("resolveDriverSpawn", () => {
     const launch = resolveDriverSpawn("claude", ["--model", "opus"], {
       platform: "win32",
       cwd: uncCwd,
-      env: { PATHEXT: ".CMD", PATH: "C:\\bin" },
+      env: { PATHEXT: ".CMD", PATH: "C:\\bin", TEMP: "C:\\Temp" },
       existsSync: fakeExists(new Set(["C:\\bin\\claude.cmd"])),
     });
     // cmd.exe is launched from the OS temp (non-UNC), so there is no UNC warning
     // and no silent fallback to C:\Windows.
-    expect(launch.options.cwd).toBe(tmpdir());
+    expect(launch.options.cwd).toBe("C:\\Temp");
     expect(/[\\/][\\/][^?\\/]/.test(launch.options.cwd ?? "")).toBe(false);
     // The UNC workspace is mapped via pushd, then the agent runs inside it, so
     // working-directory semantics are preserved without cmd.exe ever holding UNC.
@@ -221,11 +221,50 @@ describe("resolveDriverSpawn", () => {
         TMP: "\\\\server\\share\\tmp",
         SystemRoot: "D:\\Windows",
       },
+      tmpdir: () => "\\\\server\\share\\os-temp",
       existsSync: fakeExists(new Set(["C:\\bin\\claude.cmd"])),
     });
 
     expect(launch.options.cwd).toBe("D:\\Windows");
     expect(/[\\/][\\/][^?\\/]/.test(launch.options.cwd ?? "")).toBe(false);
+  });
+
+  it("rejects empty and relative temp directories in favor of an absolute local fallback", () => {
+    const launch = resolveDriverSpawn("claude", [], {
+      platform: "win32",
+      cwd: "\\\\server\\share\\workspace",
+      env: {
+        PATHEXT: ".CMD",
+        PATH: "C:\\bin",
+        TEMP: "",
+        TMP: "relative\\temp",
+        SystemRoot: "D:\\Windows",
+      },
+      tmpdir: () => "another-relative-temp",
+      existsSync: fakeExists(new Set(["C:\\bin\\claude.cmd"])),
+    });
+
+    expect(launch.options.cwd).toBe("D:\\Windows");
+    expect(win32.isAbsolute(launch.options.cwd ?? "")).toBe(true);
+    expect(/[\\/][\\/][^?\\/]/.test(launch.options.cwd ?? "")).toBe(false);
+  });
+
+  it("refuses a UNC batch launch when no safe local launch directory exists", () => {
+    expect(() =>
+      resolveDriverSpawn("claude", [], {
+        platform: "win32",
+        cwd: "\\\\server\\share\\workspace",
+        env: {
+          PATHEXT: ".CMD",
+          PATH: "C:\\bin",
+          TEMP: "",
+          TMP: "relative\\temp",
+          SystemRoot: "\\\\server\\share\\Windows",
+        },
+        tmpdir: () => "\\\\server\\share\\os-temp",
+        existsSync: fakeExists(new Set(["C:\\bin\\claude.cmd"])),
+      }),
+    ).toThrow("Cannot launch a Windows batch driver without a safe local directory");
   });
 
   it("leaves a native (non-UNC) cwd untouched at the batch boundary", () => {

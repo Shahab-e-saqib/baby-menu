@@ -26,6 +26,8 @@ export type ResolveCommandOptions = {
   env?: NodeJS.ProcessEnv;
   /** Working directory the driver will spawn into; used to neutralize UNC cwds. */
   cwd?: string;
+  /** Injectable for tests; defaults to os.tmpdir. */
+  tmpdir?: () => string;
   /** Injectable for tests; defaults to fs.existsSync. */
   existsSync?: (path: string) => boolean;
 };
@@ -129,14 +131,20 @@ function quoteWindowsCommandArgument(argument: string): string {
   return quoted.replace(WINDOWS_CMD_META_CHARS, "^$1");
 }
 
-function windowsCmdLaunchDirectory(env: NodeJS.ProcessEnv): string {
-  const configuredTemp = readEnvValue(env, "TEMP") ?? readEnvValue(env, "TMP");
-  const tempDirectory = configuredTemp ?? tmpdir();
-  if (!isUncPath(tempDirectory)) return tempDirectory;
+function isSafeWindowsLaunchDirectory(path: string | undefined): path is string {
+  return typeof path === "string" && path.length > 0 && win32Path.isAbsolute(path) && !isUncPath(path);
+}
 
-  const systemRoot = readEnvValue(env, "SYSTEMROOT");
-  if (systemRoot && win32Path.isAbsolute(systemRoot) && !isUncPath(systemRoot)) return systemRoot;
-  return "C:\\Windows";
+function windowsCmdLaunchDirectory(env: NodeJS.ProcessEnv, getTmpdir: () => string): string {
+  const candidates = [
+    readEnvValue(env, "TEMP"),
+    readEnvValue(env, "TMP"),
+    getTmpdir(),
+    readEnvValue(env, "SYSTEMROOT"),
+  ];
+  const launchDirectory = candidates.find(isSafeWindowsLaunchDirectory);
+  if (!launchDirectory) throw new Error("Cannot launch a Windows batch driver without a safe local directory");
+  return launchDirectory;
 }
 
 export function resolveDriverSpawn(
@@ -165,7 +173,7 @@ export function resolveDriverSpawn(
     // failure ("&&") prevents the agent from running in the wrong directory.
     if (typeof options.cwd === "string" && isUncPath(options.cwd)) {
       shellCommand = `pushd ${quoteWindowsCommandArgument(options.cwd)} >nul 2>&1 && ${agentCommand}`;
-      spawnOptions.cwd = windowsCmdLaunchDirectory(env);
+      spawnOptions.cwd = windowsCmdLaunchDirectory(env, options.tmpdir ?? tmpdir);
     }
     return {
       command: readEnvValue(env, "COMSPEC") ?? "cmd.exe",
