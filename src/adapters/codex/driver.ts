@@ -83,8 +83,8 @@ export class CodexDriver implements SessionDriver {
 
     logDebug(SCOPE, "spawn", this.command, args.join(" "), "<prompt via stdin>");
     const env = childEnv();
-    const launch = resolveDriverSpawn(this.command, { env });
-    const child = spawn(launch.command, args, {
+    const launch = resolveDriverSpawn(this.command, args, { env });
+    const child = spawn(launch.command, launch.args, {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...env, ...launch.env },

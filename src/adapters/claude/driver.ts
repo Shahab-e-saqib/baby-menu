@@ -78,8 +78,8 @@ export class ClaudeDriver implements SessionDriver {
 
     logDebug(SCOPE, "spawn", this.command, this.sessionId ? "(resume)" : "(new)");
     const env = childEnv();
-    const launch = resolveDriverSpawn(this.command, { env });
-    const child = spawn(launch.command, args, {
+    const launch = resolveDriverSpawn(this.command, args, { env });
+    const child = spawn(launch.command, launch.args, {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...env, ...launch.env },

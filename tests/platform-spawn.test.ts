@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  driverSpawnOptions,
+  quoteWindowsBatchArgument,
   quoteWindowsBatchExecutable,
   resolveDriverCommand,
   resolveDriverSpawn,
@@ -79,62 +80,55 @@ describe("resolveDriverCommand", () => {
   });
 });
 
-describe("driverSpawnOptions", () => {
-  it("returns no shell on POSIX", () => {
-    expect(driverSpawnOptions("claude", { platform: "darwin" })).toEqual({});
-    expect(driverSpawnOptions("claude", { platform: "linux" })).toEqual({});
-  });
-
-  it("sets shell:true for a resolved .cmd shim on Windows", () => {
-    const exists = fakeExists(new Set(["C:\\Users\\dev\\AppData\\Roaming\\npm\\claude.cmd"]));
-    expect(driverSpawnOptions("claude", { platform: "win32", env: WIN_ENV, existsSync: exists })).toEqual({
-      shell: true,
-      windowsHide: true,
-    });
-  });
-
-  it("sets shell:true for a .bat shim on Windows", () => {
-    const exists = fakeExists(new Set(["C:\\bin\\agent.bat"]));
-    expect(driverSpawnOptions("C:\\bin\\agent.bat", { platform: "win32", env: WIN_ENV, existsSync: exists })).toEqual({
-      shell: true,
-      windowsHide: true,
-    });
-  });
-
-  it("does not set shell for a native .exe on Windows", () => {
-    const exists = fakeExists(new Set(["C:\\Program Files\\App\\app.exe"]));
-    expect(driverSpawnOptions("C:\\Program Files\\App\\app.exe", { platform: "win32", env: WIN_ENV, existsSync: exists })).toEqual(
-      {},
-    );
-  });
-
-  it("does not set shell when a bare command cannot be resolved (defer to spawn ENOENT)", () => {
-    const exists = fakeExists(new Set());
-    expect(driverSpawnOptions("claude", { platform: "win32", env: WIN_ENV, existsSync: exists })).toEqual({});
-  });
-});
-
 describe("resolveDriverSpawn", () => {
-  it("preserves the POSIX command and direct-spawn options", () => {
-    expect(resolveDriverSpawn("/usr/local/bin/claude", { platform: "darwin" })).toEqual({
+  it("preserves the POSIX command, arguments, and direct-spawn options", () => {
+    expect(resolveDriverSpawn("/usr/local/bin/claude", ["--model", "opus"], { platform: "darwin" })).toEqual({
       command: "/usr/local/bin/claude",
+      args: ["--model", "opus"],
       options: {},
     });
   });
 
-  it("gives a resolved batch executable its own cmd.exe quoting boundary", () => {
+  it("gives a resolved batch invocation its own cmd.exe quoting boundary", () => {
     const command = "C:\\Users\\First Last\\%Tools% & More\\claude.cmd";
     const env = {
+      ComSpec: "C:\\Windows\\System32\\cmd.exe",
       PATHEXT: ".CMD;.EXE",
       PATH: "C:\\Users\\First Last\\%Tools% & More",
     };
     const exists = fakeExists(new Set([command]));
 
-    expect(resolveDriverSpawn("claude", { platform: "win32", env, existsSync: exists })).toEqual({
-      command: `"%${WINDOWS_BATCH_EXECUTABLE_ENV}%"`,
-      options: { shell: true, windowsHide: true },
+    expect(resolveDriverSpawn("claude", ["--model", "opus"], { platform: "win32", env, existsSync: exists })).toEqual({
+      command: "C:\\Windows\\System32\\cmd.exe",
+      args: [
+        "/d",
+        "/s",
+        "/c",
+        `""%${WINDOWS_BATCH_EXECUTABLE_ENV}%" ^"--model^" ^"opus^""`,
+      ],
+      options: { windowsHide: true, windowsVerbatimArguments: true },
       env: { [WINDOWS_BATCH_EXECUTABLE_ENV]: command },
     });
+  });
+
+  it("encodes hostile batch arguments inside their cmd.exe token", () => {
+    const hostileModel = "x & echo injected > file &";
+    const launch = resolveDriverSpawn("C:\\bin\\codex.cmd", ["exec", "--model", hostileModel], {
+      platform: "win32",
+      env: {},
+      existsSync: fakeExists(new Set(["C:\\bin\\codex.cmd"])),
+    });
+
+    expect(quoteWindowsBatchArgument(hostileModel)).toBe(
+      '^"x^ ^&^ echo^ injected^ ^>^ file^ ^&^"',
+    );
+    expect(launch.args).toEqual([
+      "/d",
+      "/s",
+      "/c",
+      `""%${WINDOWS_BATCH_EXECUTABLE_ENV}%" ^"exec^" ^"--model^" ^"x^ ^&^ echo^ injected^ ^>^ file^ ^&^""`,
+    ]);
+    expect(launch.args[3]).not.toContain(hostileModel);
   });
 
   it("quotes explicit batch paths and leaves native executables direct", () => {
@@ -142,29 +136,35 @@ describe("resolveDriverSpawn", () => {
       '"C:\\Program Files\\agent.bat"',
     );
     expect(
-      resolveDriverSpawn("C:\\Program Files\\agent.exe", {
+      resolveDriverSpawn("C:\\Program Files\\agent.exe", ["--model", "opus"], {
         platform: "win32",
         existsSync: fakeExists(new Set(["C:\\Program Files\\agent.exe"])),
       }),
     ).toEqual({
       command: "C:\\Program Files\\agent.exe",
+      args: ["--model", "opus"],
       options: {},
     });
   });
 
   it.skipIf(process.platform !== "win32")(
-    "launches a batch executable from a path with spaces and cmd metacharacters",
+    "passes a hostile batch argument verbatim without executing it",
     async () => {
       const root = await mkdtemp(join(tmpdir(), "baby-menu-batch-"));
       const commandDir = join(root, "First Last", "%Tools% & More");
       const command = join(commandDir, "agent.cmd");
+      const script = join(commandDir, "agent.mjs");
+      const injected = join(root, "injected.txt");
+      const hostileModel = `x & echo injected > "${injected}" &`;
       await mkdir(commandDir, { recursive: true });
-      await writeFile(command, "@echo off\r\necho launched\r\n");
+      await writeFile(command, '@echo off\r\nnode "%~dp0agent.mjs" %*\r\n');
+      await writeFile(script, "process.stdout.write(JSON.stringify(process.argv.slice(2)));\n");
 
       try {
-        const launch = resolveDriverSpawn(command, { platform: "win32" });
+        const expectedArgs = ["exec", "--model", hostileModel];
+        const launch = resolveDriverSpawn(command, expectedArgs, { platform: "win32" });
         const output = await new Promise<string>((resolve, reject) => {
-          const child = spawn(launch.command, [], {
+          const child = spawn(launch.command, launch.args, {
             env: { ...process.env, ...launch.env },
             stdio: ["ignore", "pipe", "pipe"],
             ...launch.options,
@@ -180,7 +180,8 @@ describe("resolveDriverSpawn", () => {
             else reject(new Error(`batch fixture exited ${code ?? "unknown"}`));
           });
         });
-        expect(output.trim()).toBe("launched");
+        expect(JSON.parse(output)).toEqual(expectedArgs);
+        expect(existsSync(injected)).toBe(false);
       } finally {
         await rm(root, { recursive: true, force: true });
       }
