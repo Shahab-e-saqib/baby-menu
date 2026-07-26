@@ -7,8 +7,8 @@ shipped for Windows**, even though the host-side plumbing is in place.
 
 ## What this milestone implements and validates automatically
 
-All of the following are covered by automated tests. The `windows-latest` job in
-`.github/workflows/ci.yml` runs these platform-portable suites on a Windows host:
+All of the following are covered by automated tests. Item 10 records the
+platform-portable subset that `.github/workflows/ci.yml` runs on a Windows host.
 
 1. **Platform-safe PATH handling** (`src/main/shell-path.ts`)
    - `mergeShellPath` no longer appends Unix directories or a `:` delimiter on
@@ -63,8 +63,25 @@ All of the following are covered by automated tests. The `windows-latest` job in
      `windowsVerbatimArguments`; paths with spaces, percent expansions, and
      shell metacharacters never become raw command text. Both drivers resolve
      and spawn through the same helper. Covered by `tests/platform-spawn.test.ts`.
+   - Both drivers pass their workspace cwd into the helper. For a UNC cwd, the
+     helper starts cmd.exe from an absolute local temp/SystemRoot directory and
+     uses `pushd` to map the workspace temporarily before invoking the shim.
+     cmd.exe therefore never receives the UNC cwd, while the agent still runs
+     in the intended workspace. The launch fails closed if no safe local launch
+     directory exists; native-drive cwd behavior is unchanged.
 
-6. **Bounded Windows process-tree cancellation** (`src/adapters/shared/process-tree.ts`)
+6. **UNC-only main-process GPU fallback** (`src/main/app.ts`,
+   `src/shared/paths.ts`)
+   - On Windows, `isUncWindowsLaunch` checks both the executable path and cwd
+     before `app.whenReady()`. A UNC launch disables hardware acceleration and
+     selects the disabled in-process GPU fallback so Chromium does not start the
+     sandboxed GPU subprocess that fails from network shares.
+   - Native local-drive launches retain hardware acceleration and the GPU
+     sandbox. The dedicated outer adapter launcher keeps its separate GPU
+     handling. `tests/windows-unc-runtime.test.ts` covers the decision boundary
+     without launching Electron.
+
+7. **Bounded Windows process-tree cancellation** (`src/adapters/shared/process-tree.ts`)
    - `createChildTerminator` keeps the exact POSIX `SIGTERM` -> `SIGKILL` behavior
      and, on Windows, runs `taskkill /T /F /PID <pid>` with a numeric pid (no
      shell interpolation of untrusted text). Each call has a five-second timeout,
@@ -74,11 +91,11 @@ All of the following are covered by automated tests. The `windows-latest` job in
      fail or time out, it force-kills the immediate child. Both drivers cancel and
      dispose through the terminator. Covered by `tests/process-tree.test.ts`.
 
-7. **`pnpm.cmd`-safe dev launcher** (`scripts/dev.mjs`)
+8. **`pnpm.cmd`-safe dev launcher** (`scripts/dev.mjs`)
    - Package-manager invocations run through `shell: true` so `pnpm.cmd` resolves
      on Windows. Covered by `tests/dev-launcher.test.ts`.
 
-8. **Windows package native dependencies** (`pnpm-workspace.yaml`,
+9. **Windows package native dependencies** (`pnpm-workspace.yaml`,
    `tests/windows-packaging.test.ts`)
    - The dependency install retains the `win32` optional packages required by a
      Windows build, including `lightningcss-win32-x64-msvc`.
@@ -86,7 +103,7 @@ All of the following are covered by automated tests. The `windows-latest` job in
      `lightningcss.win32-x64-msvc.node` is inside the packaged
      `resources/app.asar.unpacked` tree.
 
-9. **Windows CI** (`.github/workflows/ci.yml`, `windows` job)
+10. **Windows CI** (`.github/workflows/ci.yml`, `windows` job)
    - Runs `pnpm typecheck`, `pnpm build`, the five platform unit files, both
      stdin prompt regressions, and the package-content assertion on
      `windows-latest`.
@@ -116,7 +133,9 @@ Windows CI guards the packaged binary itself rather than only the install tree.
 
 The following checks then passed against the unpacked production artifacts:
 
-1. The packaged GUI started on Windows and reached Baby Menu's main process.
+1. The packaged GUI entered Baby Menu's main process. This did not prove stable
+   startup from the UNC working directory; the later follow-up below reproduced
+   a fatal GPU-process crash after main-process entry.
 2. Running the packaged executable with `ELECTRON_RUN_AS_NODE=1` reported
    `win32`, Node 24.15.0, and Electron 42.2.0.
 3. The unpacked `out/adapters/codex/index.mjs` completed an ACP protocol-v1
@@ -133,9 +152,9 @@ The following checks then passed against the unpacked production artifacts:
    cancellation, and the adapter exited 0. The normal completed turn also left
    no marked Windows or WSL process.
 
-This directly validates packaged GUI startup, the packaged Electron-as-Node
-child, difficult-path `.cmd` execution, prompt transport, and Windows tree
-cancellation.
+This directly validates main-process entry, the packaged Electron-as-Node child,
+difficult-path `.cmd` execution, prompt transport, and Windows tree cancellation.
+It does not validate stable packaged-GUI startup from a UNC working directory.
 
 ### Outer-launcher follow-up (2026-07-25)
 
@@ -147,10 +166,9 @@ WSL network share, then terminated the outer process as unusable. Direct
 Electron-as-Node execution never starts Chromium and therefore masked that
 outer-process failure.
 
-The dedicated no-renderer launcher now disables hardware acceleration and keeps
-the disabled GPU fallback in that trusted outer process. The normal GUI process
-is unchanged, and the workaround does not use `--no-sandbox` or disable the
-normal GUI sandbox.
+The dedicated no-renderer launcher disables hardware acceleration and keeps the
+disabled GPU fallback in that trusted outer process. Native-path GUI launches
+remain unchanged, and the workaround does not use `--no-sandbox`.
 
 After rebuilding the same unpacked package, the outer launcher completed a real
 Codex ACP initialize/new-session/prompt exchange through the difficult-path
@@ -164,13 +182,50 @@ This follow-up does not claim installer, signing, native-local-drive, or Claude
 validation. Driving both bundled adapters from a short native Windows path
 remains a clean-Windows item below.
 
+### Main-process UNC follow-up (2026-07-26)
+
+Three packaged-GUI launches from a UNC current working directory reproduced the
+same fatal Chromium GPU failure: the sandboxed GPU subprocess failed repeatedly
+with error code 18, followed by
+`gpu_data_manager_impl_private.cc:417` ("GPU process isn't usable. Goodbye.").
+The crash belonged to the main packaged app process, not the outer adapter
+launcher. An adapter turn from the same launch also passed the UNC workspace cwd
+to cmd.exe, which warned that UNC paths are unsupported and silently fell back
+to `C:\Windows`.
+
+The main app now applies the disabled in-process GPU fallback before Chromium
+starts, but only when its Windows executable path or cwd is UNC. The adapter
+drivers now pass their workspace cwd to the shared spawn helper; UNC `.cmd`
+launches start cmd.exe from a safe local directory and use `pushd` to run the
+agent in the intended workspace. Native-drive launches preserve their prior GPU,
+sandbox, and cwd behavior. Cross-platform unit regressions cover both decision
+boundaries without launching Electron.
+
+The packaged fix has not been re-run on Windows yet. Per the bounded validation
+plan, that single packaged launch check remains deferred until the current
+pipeline is green.
+
 ## What this milestone does NOT prove (needs clean-Windows validation)
 
 These items require a real, packaged Windows runtime and are the documented
 remaining steps for the full port. The spike intentionally does not pretend they
 passed.
 
-### A. Packaged Electron-as-Node launcher behavior
+### A. Packaged GUI startup from a UNC working directory
+
+The main-process GPU and `.cmd` cwd safeguards are implemented and covered
+without launching Electron.
+
+**Remaining packaged-Windows validation step:**
+1. From the same UNC working-directory setup that reproduced the crash, perform
+   one bounded launch of the rebuilt packaged app and confirm it remains live
+   without the fatal GPU loop.
+2. Drive one adapter turn and confirm cmd.exe emits no UNC warning and the agent
+   observes the intended workspace rather than `C:\Windows`.
+
+Do not claim packaged UNC startup is fixed until this passes.
+
+### B. Packaged Electron-as-Node launcher behavior
 
 The launcher and its acpx command wiring are implemented and covered by
 cross-platform unit tests. The manual follow-up above validates a complete Codex
@@ -191,7 +246,7 @@ until this passes. Setting `ELECTRON_RUN_AS_NODE` globally in the Electron main
 process remains rejected as too broad: it would propagate to every host child
 (git, taskkill probes, background-task shells) even though most ignore it.
 
-### B. Native Windows agent credentials and `.cmd` cancellation
+### C. Native Windows agent credentials and `.cmd` cancellation
 
 The manual check above proves `taskkill /T /F /PID <pid>` removes a real
 project-local `codex.cmd` process tree, including the authenticated Codex CLI and
@@ -204,7 +259,7 @@ installation was not available on this host.
 2. Assert no native `claude*`, `codex*`, `node`, or tool-process descendant
    survives (e.g. via `tasklist` after the turn settles).
 
-### C. The broader test suite on Windows
+### D. The broader test suite on Windows
 
 The `windows` CI job intentionally runs only the platform-portable unit files
 and prompt transport regressions. Many other specs execute `/bin/bash`/`/bin/sh`,
@@ -212,7 +267,7 @@ rely on Unix fixtures (shebangs, `chmod`, symlinks), or are explicitly
 `skipIf(win32)`. Porting the core ACP/change-session e2e to Windows (removing the
 win32 skips in `tests/e2e-acp-runtime.test.ts`) is not done here.
 
-### D. Out of scope for this milestone entirely
+### E. Out of scope for this milestone entirely
 
 None of the following are in this milestone: tray polish/assets,
 `.ico`, AppUserModelID, single-instance lock, NSIS installer, Authenticode
