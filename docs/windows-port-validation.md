@@ -57,11 +57,12 @@ All of the following are covered by automated tests. The `windows-latest` job in
    - `resolveDriverCommand` resolves a bare command to its `.cmd` shim via
      PATHEXT and PATH search (mirrors acpx's own resolution).
      `resolveDriverSpawn` carries `.cmd`/`.bat` paths through a child-scoped
-     environment value and invokes a fixed, independently quoted cmd.exe token
-     before enabling `shell: true` with `windowsHide: true`. Paths with spaces,
-     percent expansions, and shell metacharacters never become raw command text.
-     Both drivers resolve and spawn through the same helper. Covered by
-     `tests/platform-spawn.test.ts`.
+     environment value, invokes the selected cmd.exe directly with fixed
+     `/d /s /c` arguments, and quotes each batch argument for cmd.exe's nested
+     parsing layers. The child uses `windowsHide` and
+     `windowsVerbatimArguments`; paths with spaces, percent expansions, and
+     shell metacharacters never become raw command text. Both drivers resolve
+     and spawn through the same helper. Covered by `tests/platform-spawn.test.ts`.
 
 6. **Bounded Windows process-tree cancellation** (`src/adapters/shared/process-tree.ts`)
    - `createChildTerminator` keeps the exact POSIX `SIGTERM` -> `SIGKILL` behavior

@@ -4,8 +4,10 @@
 // On Windows an npm global install is almost always a `claude.cmd`/`codex.cmd`
 // shim, and Node cannot launch a `.cmd`/`.bat` without a shell (since
 // CVE-2024-27980, Node rejects `.bat`/`.cmd` spawns without `shell: true`).
-// acpx already handles this for ITS spawns; these helpers give the drivers the
-// same PATHEXT-aware resolution and `.cmd` shell selection.
+// acpx already handles this for ITS spawns. These helpers give the drivers the
+// same PATHEXT-aware resolution, then invoke cmd.exe directly with independently
+// quoted arguments instead of interpolating a resolved shim path into raw shell
+// command text.
 import { existsSync } from "node:fs";
 import { win32 as win32Path } from "node:path";
 

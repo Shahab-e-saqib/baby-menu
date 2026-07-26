@@ -77,7 +77,7 @@ The extension-facing slice of that contract is a generated public surface, treat
 - `widget-module-registry.ts` - discovers widget modules and the optional root `layout.tsx`, returning renderer `/@fs` URLs in dev and, in packaged mode, compiled `baby-menu-widget://` module URLs plus sibling compiled `cssUrl` files; compiled layout failures warn and fall back to the built-in column.
 - `widget-protocol.ts` - registers custom protocols for compiled widget and layout modules, their `.css`, and the renderer host shims (`react`, `react/jsx-runtime`, and `@babymenu/ui` re-exported from the host global).
 - `preferences.ts` - stores app preferences, including the selected agent, under the active app data root and applies login-item settings only when login items are allowed, keeping source/dev mode as a no-op for macOS login items.
-- `shell-path.ts` - expands `PATH` for GUI launches so packaged apps can find agent CLIs.
+- `shell-path.ts` - expands the GUI-launch `PATH` with common Unix and login-shell entries on macOS/Linux, while preserving the inherited Windows `PATH` unchanged.
 - `update-checker.ts` - checks the latest GitHub Release at most every 4 hours, compares it to the running app version, opens the release page externally, and simulates an available update in source/dev mode so the header indicator can be exercised.
 - `recipe-loader.ts` - discovers and parses `recipes/*.html` from the active extension workspace.
 - `server-action-registry.ts` - discovers extension server actions and background task declarations from the active extension workspace, caches unchanged compiled server modules, and reloads them when the entry or local helper source changes.
