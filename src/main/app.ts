@@ -2,7 +2,7 @@ import { app, BrowserWindow, screen, shell, type Rectangle } from "electron";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BabyMenuCustomAgentInput, BabyMenuSettings } from "../shared/contracts";
-import { getRepoRoot } from "../shared/paths";
+import { getRepoRoot, isUncWindowsLaunch } from "../shared/paths";
 import { createAgentCatalogController } from "./agent-catalog-controller";
 import { BabyMenuAgentRuntime, commandExists } from "./agent-runtime";
 import { resolveBabyMenuRuntimePaths } from "./app-paths";
@@ -42,6 +42,20 @@ if (windowsAdapterLaunchRequest) {
 
 if (!windowsAdapterLaunchRequest && process.platform === "darwin") {
   app.commandLine.appendSwitch("use-mock-keychain");
+}
+
+// Narrow GPU fallback for the MAIN packaged app process when launched from a
+// UNC path (e.g. a WSL \\wsl.localhost\... network share): Chromium's sandboxed
+// GPU subprocess cannot launch from a network share, which crashes the app at
+// startup in a fatal GPU-init loop (gpu_data_manager_impl_private.cc:417
+// "GPU process isn't usable. Goodbye."). This is scoped to UNC launches only, so
+// native local-drive installs keep full GPU acceleration and the GPU sandbox;
+// the Electron-as-Node adapter launcher has its own equivalent handling. The
+// switches must be appended before app.whenReady() (i.e. before Chromium starts).
+if (!windowsAdapterLaunchRequest && isUncWindowsLaunch()) {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch("in-process-gpu");
+  app.commandLine.appendSwitch("disable-gpu");
 }
 
 const remoteDebuggingPort = Number(process.env.BABY_MENU_REMOTE_DEBUGGING_PORT);

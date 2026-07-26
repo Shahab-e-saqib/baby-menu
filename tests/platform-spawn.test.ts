@@ -187,4 +187,35 @@ describe("resolveDriverSpawn", () => {
       }
     },
   );
+
+  it("maps a UNC cwd to a temporary drive so cmd.exe never sees a UNC working directory", () => {
+    const uncCwd = "\\\\wsl.localhost\\Ubuntu\\home\\dev\\workspace";
+    const launch = resolveDriverSpawn("claude", ["--model", "opus"], {
+      platform: "win32",
+      cwd: uncCwd,
+      env: { PATHEXT: ".CMD", PATH: "C:\\bin" },
+      existsSync: fakeExists(new Set(["C:\\bin\\claude.cmd"])),
+    });
+    // cmd.exe is launched from the OS temp (non-UNC), so there is no UNC warning
+    // and no silent fallback to C:\Windows.
+    expect(launch.options.cwd).toBe(tmpdir());
+    expect(/[\\/][\\/][^?\\/]/.test(launch.options.cwd ?? "")).toBe(false);
+    // The UNC workspace is mapped via pushd, then the agent runs inside it, so
+    // working-directory semantics are preserved without cmd.exe ever holding UNC.
+    const cmd = launch.args[3]!;
+    expect(cmd).toContain("pushd ");
+    expect(cmd).toContain(" >nul 2>&1 && ");
+    expect(cmd).toContain(`%${WINDOWS_BATCH_EXECUTABLE_ENV}%`);
+  });
+
+  it("leaves a native (non-UNC) cwd untouched at the batch boundary", () => {
+    const launch = resolveDriverSpawn("claude", ["--model", "opus"], {
+      platform: "win32",
+      cwd: "C:\\Users\\dev\\workspace",
+      env: { PATHEXT: ".CMD", PATH: "C:\\bin" },
+      existsSync: fakeExists(new Set(["C:\\bin\\claude.cmd"])),
+    });
+    expect(launch.options.cwd).toBeUndefined();
+    expect(launch.args[3]).not.toContain("pushd");
+  });
 });

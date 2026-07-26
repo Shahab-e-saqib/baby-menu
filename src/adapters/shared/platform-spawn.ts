@@ -9,11 +9,23 @@
 // quoted arguments instead of interpolating a resolved shim path into raw shell
 // command text.
 import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { win32 as win32Path } from "node:path";
+
+/**
+ * True for a Win32 UNC path (`\\\\server\\share\\...` or `//server/share/...`),
+ * excluding the verbatim `\\\\?\\` namespace. Mirrors src/shared/paths.ts; kept
+ * local so the adapter bundle stays self-contained.
+ */
+function isUncPath(path: string): boolean {
+  return /^[\\/][\\/][^?\\/]/.test(path);
+}
 
 export type ResolveCommandOptions = {
   platform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
+  /** Working directory the driver will spawn into; used to neutralize UNC cwds. */
+  cwd?: string;
   /** Injectable for tests; defaults to fs.existsSync. */
   existsSync?: (path: string) => boolean;
 };
@@ -73,6 +85,8 @@ export function resolveDriverCommand(command: string, options: ResolveCommandOpt
 export type DriverSpawnOptionsResult = {
   windowsHide?: boolean;
   windowsVerbatimArguments?: boolean;
+  /** Override cwd for the spawn (used to keep cmd.exe off a UNC cwd). */
+  cwd?: string;
 };
 
 export type DriverSpawnSpec = {
@@ -121,14 +135,27 @@ export function resolveDriverSpawn(
   const ext = win32Path.extname(resolved).toLowerCase();
   if (ext === ".cmd" || ext === ".bat") {
     const env = options.env ?? process.env;
-    const shellCommand = [
+    const agentCommand = [
       quoteWindowsBatchExecutable(`%${WINDOWS_BATCH_EXECUTABLE_ENV}%`),
       ...args.map(quoteWindowsBatchArgument),
     ].join(" ");
+    const spawnOptions: DriverSpawnOptionsResult = { windowsHide: true, windowsVerbatimArguments: true };
+    let shellCommand = agentCommand;
+    // cmd.exe cannot hold a UNC current directory: it prints "UNC paths are not
+    // supported" and silently falls back to C:\Windows, so the agent would run
+    // in the wrong directory. When the workspace cwd is UNC (e.g. a WSL
+    // \\wsl.localhost\... path), map it to a temporary drive with `pushd` so the
+    // agent still runs in the intended workspace, and launch cmd.exe from a
+    // non-UNC directory (the OS temp) so it never warns or falls back. pushd
+    // failure ("&&") prevents the agent from running in the wrong directory.
+    if (typeof options.cwd === "string" && isUncPath(options.cwd)) {
+      shellCommand = `pushd ${quoteWindowsBatchArgument(options.cwd)} >nul 2>&1 && ${agentCommand}`;
+      spawnOptions.cwd = tmpdir();
+    }
     return {
       command: readEnvValue(env, "COMSPEC") ?? "cmd.exe",
       args: ["/d", "/s", "/c", `"${shellCommand}"`],
-      options: { windowsHide: true, windowsVerbatimArguments: true },
+      options: spawnOptions,
       env: { [WINDOWS_BATCH_EXECUTABLE_ENV]: resolved },
     };
   }
