@@ -104,15 +104,15 @@ describe("resolveDriverSpawn", () => {
         "/d",
         "/s",
         "/c",
-        `""%${WINDOWS_BATCH_EXECUTABLE_ENV}%" ^"--model^" ^"opus^""`,
+        `""%${WINDOWS_BATCH_EXECUTABLE_ENV}%" ^^^"--model^^^" ^^^"opus^^^""`,
       ],
       options: { windowsHide: true, windowsVerbatimArguments: true },
       env: { [WINDOWS_BATCH_EXECUTABLE_ENV]: command },
     });
   });
 
-  it("encodes hostile batch arguments inside their cmd.exe token", () => {
-    const hostileModel = "x & echo injected > file &";
+  it("double-encodes hostile batch arguments for both cmd.exe parse layers", () => {
+    const hostileModel = "x & echo injected > file & ^ %PATH%";
     const launch = resolveDriverSpawn("C:\\bin\\codex.cmd", ["exec", "--model", hostileModel], {
       platform: "win32",
       env: {},
@@ -120,13 +120,13 @@ describe("resolveDriverSpawn", () => {
     });
 
     expect(quoteWindowsBatchArgument(hostileModel)).toBe(
-      '^"x^ ^&^ echo^ injected^ ^>^ file^ ^&^"',
+      '^^^"x^^^ ^^^&^^^ echo^^^ injected^^^ ^^^>^^^ file^^^ ^^^&^^^ ^^^^^^^ ^^^%PATH^^^%^^^"',
     );
     expect(launch.args).toEqual([
       "/d",
       "/s",
       "/c",
-      `""%${WINDOWS_BATCH_EXECUTABLE_ENV}%" ^"exec^" ^"--model^" ^"x^ ^&^ echo^ injected^ ^>^ file^ ^&^""`,
+      `""%${WINDOWS_BATCH_EXECUTABLE_ENV}%" ^^^"exec^^^" ^^^"--model^^^" ^^^"x^^^ ^^^&^^^ echo^^^ injected^^^ ^^^>^^^ file^^^ ^^^&^^^ ^^^^^^^ ^^^%PATH^^^%^^^""`,
     ]);
     expect(launch.args[3]).not.toContain(hostileModel);
   });
@@ -155,7 +155,7 @@ describe("resolveDriverSpawn", () => {
       const command = join(commandDir, "agent.cmd");
       const script = join(commandDir, "agent.mjs");
       const injected = join(root, "injected.txt");
-      const hostileModel = `x & echo injected > "${injected}" &`;
+      const hostileModel = `x & echo injected > "${injected}" & ^ %PATH%`;
       await mkdir(commandDir, { recursive: true });
       await writeFile(command, '@echo off\r\nnode "%~dp0agent.mjs" %*\r\n');
       await writeFile(script, "process.stdout.write(JSON.stringify(process.argv.slice(2)));\n");

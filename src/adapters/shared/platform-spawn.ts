@@ -104,7 +104,8 @@ export function quoteWindowsBatchArgument(argument: string): string {
     backslashes = 0;
   }
   escaped += "\\".repeat(backslashes * 2);
-  return `"${escaped}"`.replace(WINDOWS_CMD_META_CHARS, "^$1");
+  const quoted = `"${escaped}"`.replace(WINDOWS_CMD_META_CHARS, "^$1");
+  return quoted.replace(WINDOWS_CMD_META_CHARS, "^$1");
 }
 
 export function resolveDriverSpawn(
