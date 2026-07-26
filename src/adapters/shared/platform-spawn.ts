@@ -124,6 +124,21 @@ export function quoteWindowsBatchArgument(argument: string): string {
   return quoted.replace(WINDOWS_CMD_META_CHARS, "^$1");
 }
 
+function quoteWindowsCommandArgument(argument: string): string {
+  const quoted = `"${argument}"`;
+  return quoted.replace(WINDOWS_CMD_META_CHARS, "^$1");
+}
+
+function windowsCmdLaunchDirectory(env: NodeJS.ProcessEnv): string {
+  const configuredTemp = readEnvValue(env, "TEMP") ?? readEnvValue(env, "TMP");
+  const tempDirectory = configuredTemp ?? tmpdir();
+  if (!isUncPath(tempDirectory)) return tempDirectory;
+
+  const systemRoot = readEnvValue(env, "SYSTEMROOT");
+  if (systemRoot && win32Path.isAbsolute(systemRoot) && !isUncPath(systemRoot)) return systemRoot;
+  return "C:\\Windows";
+}
+
 export function resolveDriverSpawn(
   command: string,
   args: readonly string[],
@@ -149,8 +164,8 @@ export function resolveDriverSpawn(
     // non-UNC directory (the OS temp) so it never warns or falls back. pushd
     // failure ("&&") prevents the agent from running in the wrong directory.
     if (typeof options.cwd === "string" && isUncPath(options.cwd)) {
-      shellCommand = `pushd ${quoteWindowsBatchArgument(options.cwd)} >nul 2>&1 && ${agentCommand}`;
-      spawnOptions.cwd = tmpdir();
+      shellCommand = `pushd ${quoteWindowsCommandArgument(options.cwd)} >nul 2>&1 && ${agentCommand}`;
+      spawnOptions.cwd = windowsCmdLaunchDirectory(env);
     }
     return {
       command: readEnvValue(env, "COMSPEC") ?? "cmd.exe",

@@ -204,8 +204,28 @@ describe("resolveDriverSpawn", () => {
     // working-directory semantics are preserved without cmd.exe ever holding UNC.
     const cmd = launch.args[3]!;
     expect(cmd).toContain("pushd ");
+    expect(cmd).toContain(`pushd ^"${uncCwd}^"`);
+    expect(cmd).not.toContain(`pushd ^^^"${uncCwd}^^^"`);
     expect(cmd).toContain(" >nul 2>&1 && ");
     expect(cmd).toContain(`%${WINDOWS_BATCH_EXECUTABLE_ENV}%`);
+  });
+
+  it("uses a native SystemRoot launch directory when Windows temp variables are UNC", () => {
+    const launch = resolveDriverSpawn("claude", [], {
+      platform: "win32",
+      cwd: "\\\\server\\share\\workspace",
+      env: {
+        PATHEXT: ".CMD",
+        PATH: "C:\\bin",
+        TEMP: "\\\\server\\share\\temp",
+        TMP: "\\\\server\\share\\tmp",
+        SystemRoot: "D:\\Windows",
+      },
+      existsSync: fakeExists(new Set(["C:\\bin\\claude.cmd"])),
+    });
+
+    expect(launch.options.cwd).toBe("D:\\Windows");
+    expect(/[\\/][\\/][^?\\/]/.test(launch.options.cwd ?? "")).toBe(false);
   });
 
   it("leaves a native (non-UNC) cwd untouched at the batch boundary", () => {
