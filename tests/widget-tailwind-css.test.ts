@@ -36,7 +36,7 @@ describe("per-widget Tailwind compile", () => {
     expect(css).toContain(".bg-surface");
   });
 
-  it("compiles when sourceDir is a symlink to the real workspace (home-manager/Nix)", async () => {
+  it.skipIf(process.platform === "win32")("compiles when sourceDir is a symlink to the real workspace (home-manager/Nix)", async () => {
     // The packaged workspace root (~/.baby-menu/extensions) can be a home-manager
     // symlink into the read-only Nix store. The layout compile passes that root as
     // sourceDir; fs.cp refuses to copy a symlink node onto the temp scan dir

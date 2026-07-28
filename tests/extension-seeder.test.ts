@@ -42,7 +42,7 @@ describe("seedExtensionWorkspace", () => {
     await expect(readFile(join(extensionsDir, "AGENTS.md"), "utf8")).resolves.toBe("template rules\n");
   });
 
-  it("resolves a symlinked workspace and seeds into the real writable target", async () => {
+  it.skipIf(process.platform === "win32")("resolves a symlinked workspace and seeds into the real writable target", async () => {
     // The home-manager mkOutOfStoreSymlink pattern: ~/.baby-menu/extensions is a
     // Nix-declared symlink into a WRITABLE dotfiles path. fs.cp refuses to copy a
     // directory onto the symlink node directly, so the seeder must resolve it.
@@ -64,7 +64,7 @@ describe("seedExtensionWorkspace", () => {
     await expect(lstat(extensionsDir).then((s) => s.isSymbolicLink())).resolves.toBe(true);
   });
 
-  it("creates and seeds the target when the symlink points to a not-yet-existing writable path", async () => {
+  it.skipIf(process.platform === "win32")("creates and seeds the target when the symlink points to a not-yet-existing writable path", async () => {
     const templateDir = await makeTemplate();
     const linkTarget = join(templateDir, "..", "not-created-yet");
     const extensionsDir = join(templateDir, "..", "extensions");
@@ -76,7 +76,7 @@ describe("seedExtensionWorkspace", () => {
     await expect(readFile(join(linkTarget, "AGENTS.md"), "utf8")).resolves.toBe("template rules\n");
   });
 
-  it("skips without throwing when the symlink target is read-only (Nix store)", async () => {
+  it.skipIf(process.platform === "win32")("skips without throwing when the symlink target is read-only (Nix store)", async () => {
     const templateDir = await makeTemplate();
     const linkTarget = join(templateDir, "..", "readonly-store");
     const extensionsDir = join(templateDir, "..", "extensions");
@@ -103,7 +103,7 @@ describe("seedExtensionWorkspace", () => {
     await expect(readFile(extensionsDir, "utf8")).resolves.toBe("not a directory\n");
   });
 
-  it("returns false instead of throwing when the copy fails", async () => {
+  it.skipIf(process.platform === "win32")("returns false instead of throwing when the copy fails", async () => {
     const templateDir = await makeTemplate();
     const extensionsDir = join(templateDir, "..", "extensions");
     await mkdir(extensionsDir, { recursive: true });

@@ -58,7 +58,7 @@ describe("layout module registry", () => {
     expect(descriptor?.cssUrl).toMatch(/^baby-menu-widget:\/\/__layout\/[a-f0-9]{16}\/widget\.css$/);
   });
 
-  it("compiles the layout when the extensions workspace is a symlink (home-manager/Nix)", async () => {
+  it.skipIf(process.platform === "win32")("compiles the layout when the extensions workspace is a symlink (home-manager/Nix)", async () => {
     // Reproduces production on a home-manager/Nix machine: ~/.baby-menu/extensions
     // is a symlink into the read-only store. The layout compile passes the root as
     // the Tailwind source dir, and copying a symlinked root used to throw, which
