@@ -362,7 +362,13 @@ export async function startBabyMenuApp(): Promise<void> {
     (bounds) => {
       void togglePopover(bounds);
     },
-    { iconPath: paths.trayIconPath },
+    {
+      iconPath: paths.trayIconPath,
+      onOpen: (bounds) => {
+        void togglePopover(bounds);
+      },
+      onQuit: () => app.quit(),
+    },
   );
 
   if (process.env.BABY_MENU_OPEN_POPOVER_ON_START === "1") {

@@ -207,6 +207,8 @@ describe("startBabyMenuApp", () => {
 
     expect(createBabyMenuTray).toHaveBeenCalledWith(expect.any(Function), {
       iconPath: "/repo/assets/tray/baby_menuTemplate.png",
+      onOpen: expect.any(Function),
+      onQuit: expect.any(Function),
     });
     expect(appModule.getActiveBabyMenuTray?.()).toBe(trayInstance);
   });
@@ -220,6 +222,8 @@ describe("startBabyMenuApp", () => {
 
     expect(createBabyMenuTray).toHaveBeenCalledWith(expect.any(Function), {
       iconPath: "/repo/assets/tray/baby_menuTemplate.png",
+      onOpen: expect.any(Function),
+      onQuit: expect.any(Function),
     });
     expect(appModule.getActiveBabyMenuTray()).toBe(trayInstance);
   });

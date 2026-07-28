@@ -170,7 +170,7 @@ describe("startBabyMenuApp with a symlinked extension workspace", () => {
     await expect(appModule.startBabyMenuApp()).resolves.toBeUndefined();
 
     // Startup reached tray creation instead of aborting on the seeder throw.
-    expect(createBabyMenuTray).toHaveBeenCalledWith(expect.any(Function), { iconPath: join(tempDirs[0], "tray.png") });
+    expect(createBabyMenuTray).toHaveBeenCalledWith(expect.any(Function), { iconPath: join(tempDirs[0], "tray.png"), onOpen: expect.any(Function), onQuit: expect.any(Function) });
     expect(appModule.getActiveBabyMenuTray()).toBe(trayInstance);
 
     // The seed resolved the symlink and landed in the real writable target...
