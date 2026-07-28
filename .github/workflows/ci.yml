@@ -115,3 +115,26 @@ jobs:
           pnpm exec electron-builder --win dir --x64 --config electron-builder.yml --publish never
           $env:BABY_MENU_WINDOWS_PACKAGE_DIR = (Resolve-Path "release/win-unpacked").Path
           pnpm vitest run tests/windows-packaging.test.ts
+
+      - name: Build x64 NSIS unsigned installer
+        shell: pwsh
+        run: pnpm exec electron-builder --win nsis --x64 --config electron-builder.yml --publish never
+
+      - name: Verify NSIS unsigned artifact
+        shell: pwsh
+        run: |
+          $installers = Get-ChildItem "release/Baby-Menu-*-x64-unsigned.exe"
+          if ($installers.Count -ne 1) { throw "Expected exactly 1 unsigned NSIS installer, found $($installers.Count): $($installers.Name -join ', ')" }
+          $installer = $installers[0]
+          if ($installer.Length -eq 0) { throw "Installer $($installer.Name) is empty" }
+          $bytes = [System.IO.File]::ReadAllBytes($installer.FullName)
+          if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw "$($installer.Name) is not a valid Windows PE executable (missing MZ magic bytes)" }
+          Write-Host "Verified: $($installer.Name) ($($installer.Length) bytes, valid PE)"
+
+      - name: Upload unsigned NSIS installer for internal validation
+        uses: actions/upload-artifact@v4
+        with:
+          name: baby-menu-unsigned-nsis-x64
+          path: release/Baby-Menu-*-x64-unsigned.exe
+          retention-days: 1
+          if-no-files-found: error
