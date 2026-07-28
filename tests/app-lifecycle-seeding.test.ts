@@ -110,7 +110,7 @@ vi.mock("../src/main/widget-protocol", () => ({
 }));
 vi.mock("../src/main/tray", () => ({ createBabyMenuTray }));
 vi.mock("../src/main/shell-path", () => ({ expandProcessPathForGuiLaunch: vi.fn(() => "/usr/bin:/bin") }));
-vi.mock("../src/shared/paths", () => ({ EXTENSIONS_DIR_ENV: "BABY_MENU_EXTENSIONS_DIR", getRepoRoot: vi.fn(() => "/repo") }));
+vi.mock("../src/shared/paths", () => ({ EXTENSIONS_DIR_ENV: "BABY_MENU_EXTENSIONS_DIR", getRepoRoot: vi.fn(() => "/repo"), isUncWindowsLaunch: vi.fn(() => false) }));
 
 describe("startBabyMenuApp with a symlinked extension workspace", () => {
   const tempDirs: string[] = [];
