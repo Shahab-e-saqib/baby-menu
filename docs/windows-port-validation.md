@@ -42,7 +42,28 @@ Item 10 records the platform-portable subset CI runs on a Windows host.
 9. **Windows package native dependencies** (`pnpm-workspace.yaml`, `tests/windows-packaging.test.ts`) — `supportedArchitectures` retains `win32` optional packages including `lightningcss-win32-x64-msvc`.
    Windows CI builds an x64 `win-unpacked` package and asserts the packaged `app.asar.unpacked` tree contains `lightningcss.win32-x64-msvc.node`.
 
-10. **Windows CI** (`.github/workflows/ci.yml`, `windows` job) — runs `pnpm typecheck`, `pnpm build`, the five platform unit files, both stdin prompt regressions, and the package-content assertion on `windows-latest`.
+10. **Windows CI** (`.github/workflows/ci.yml`, `windows` job) — runs `pnpm typecheck`, `pnpm build`, and **38 test files** on `windows-latest`: the five platform unit files, both stdin prompt regressions, the package-content assertion, plus 31 extension/widget/agent/app-support unit files.
+    Deferred test categories (each with a concrete reason in the CI comment):
+    `e2e-acp-runtime` (real ACP subprocess + git + acp-mock), `e2e-adapters` (real Claude/Codex CLIs), `e2e-grok-quota-refresh` (real Grok OIDC creds), `app-lifecycle*.test.ts` (Electron GUI lifecycle), `tray.test.ts` (macOS tray / BrowserWindow), `popover-*.test.ts` (Electron BrowserWindow / screen bounds), `grok-quota-generated-install` (POSIX process-group signals), `renderer/*` plus widget-host/widget-canvas/agent-chat/settings-* (jsdom/React), `widget-protocol.test.ts` (Electron binary not guaranteed on Windows runners).
+    `.github/workflows/ci.yml`.
+
+11. **Windows ICO icon assets** (`assets/app-icon.ico`, `assets/tray/baby_menu.ico`, `scripts/generate-windows-icons.mjs`) — deterministic ICO generation from the same vector source used for the macOS `iconTemplate.png`.
+    `tests/windows-icon-assets.test.ts` proves the ICO contains the required format entries (16x16, 32x32, 48x48) and matches the PNG checksum.
+
+12. **Platform-aware tray icon loading** (`src/main/app-paths.ts`, `src/main/tray.ts`) — `trayIconPath` resolves to `baby_menu.ico` on Windows and `baby_menuTemplate.png` on macOS.
+    The tray icon loads from the correct path per platform; on Windows the `.ico` file is not set as a template image.
+    `tests/tray.test.ts` (macOS stubs), `tests/app-paths.test.ts` (path resolution per platform).
+
+13. **Windows tray tooltip, context menu, and onOpen/onQuit callbacks** (`src/main/tray.ts`) — `createBabyMenuTray` accepts optional `onOpen` and `onQuit` callbacks.
+    On Windows the tray sets a tooltip ("baby-menu"), builds a context menu with Open and Quit items, and wires the callbacks through click handlers.
+    `tests/tray.test.ts`.
+
+14. **AppUserModelID and single-instance lock** (`src/main/app.ts`) — `app.setAppUserModelId("com.kunchenguid.baby-menu")` runs before `app.whenReady()` on Windows so the taskbar groups the instance correctly.
+    `app.requestSingleInstanceLock()` ensures only the first process creates the tray/popover/runtime; a second instance quits after forwarding its activation to the primary popover.
+    Cross-platform unit coverage via the broader app-support test suite.
+
+15. **Windows taskbar-aware popover geometry** (`src/main/popover.ts`) — `calculatePopoverBounds` computes the popover position against the Windows taskbar (workspace-aware `workArea`, not the full screen), using Electron's `display.getPrimaryDisplay().workArea`.
+    `tests/popover-position.test.ts` proves the popover stays within the work area on the expected side of the taskbar without launching Electron.
 
 ## Manual Windows 11 validation (evidence from WSL-interop check)
 
@@ -122,10 +143,10 @@ A native Windows agent installation was not available.
 
 ### D. The broader test suite on Windows
 
-The `windows` CI job runs only platform-portable unit files and prompt transport regressions.
-Many specs execute `/bin/bash`/`/bin/sh`, rely on Unix fixtures (shebangs, `chmod`, symlinks), or are explicitly `skipIf(win32)`.
+The `windows` CI job runs 38 test files spanning platform units, extension infrastructure, widget pipeline, agent/runtime, and app support.
+Many specs execute `/bin/bash`/`/bin/sh`, rely on Unix fixtures (shebangs, `chmod`, symlinks), or are explicitly `skipIf(win32)` — 10 `skipIf(win32)` guards cover symlink, chmod, and Nix-store-specific test cases across `extension-seeder`, `extension-module-compiler`, `widget-tailwind-css`, `layout-module-registry`, and `dev-extension-change-session`.
 Porting core ACP/change-session e2e (removing win32 skips in `tests/e2e-acp-runtime.test.ts`) is not done here.
 
 ### E. Out of scope for this milestone entirely
 
-Tray polish/assets, `.ico`, AppUserModelID, single-instance lock, NSIS installer, Authenticode signing, update copy, recipe platform-filtering/parity, or any greenfield rewrite.
+NSIS installer, Authenticode signing, update copy, recipe platform-filtering/parity, or any greenfield rewrite.
