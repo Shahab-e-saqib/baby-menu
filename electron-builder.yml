@@ -41,6 +41,19 @@ mac:
 
 win:
   icon: assets/app-icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Baby Menu
+  artifactName: Baby-Menu-${version}-x64-unsigned.${ext}
 
 dmg:
   artifactName: Baby-Menu-${version}-universal.dmg

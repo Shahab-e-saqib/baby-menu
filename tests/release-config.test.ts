@@ -52,12 +52,28 @@ describe("distribution config", () => {
     await expect(stat(resolve(import.meta.dirname, "../assets/app-icon.icns")).then((file) => file.isFile())).resolves.toBe(true);
   });
 
-  it("includes Windows app icon and no NSIS installer", async () => {
+  it("configures NSIS per-user installer with selectable path, shortcuts, and unsigned artifact name", async () => {
     const config = await readFile(resolve(import.meta.dirname, "../electron-builder.yml"), "utf8");
 
     expect(config).toContain("win:");
     expect(config).toContain("icon: assets/app-icon.ico");
-    expect(config).not.toContain("nsis:");
+    expect(config).toContain("nsis:");
+    expect(config).toContain("oneClick: false");
+    expect(config).toContain("perMachine: false");
+    expect(config).toContain("allowToChangeInstallationDirectory: true");
+    expect(config).toContain("createDesktopShortcut: true");
+    expect(config).toContain("createStartMenuShortcut: true");
+    expect(config).toContain("shortcutName: Baby Menu");
+    expect(config).toContain("artifactName: Baby-Menu-${version}-x64-unsigned.${ext}");
+    expect(config).not.toContain("deleteAppDataOnUninstall");
+  });
+
+  it("adds the package:win script that builds the NSIS installer", () => {
+    const script = packageJson.scripts?.["package:win"];
+    expect(script).toContain("electron-builder --win --x64");
+    expect(script).toContain("--config electron-builder.dev.yml");
+    expect(script).not.toMatch(/\brm\s+-rf\b/);
+    expect(script).toContain("rmSync");
   });
 
   it("adds a release-please workflow that publishes the DMG and updates the Homebrew tap after a release", async () => {

@@ -19,6 +19,7 @@
     "generate:contracts": "node scripts/generate-extension-dts.mjs",
     "generate:windows-icons": "node scripts/generate-windows-icons.mjs",
     "package:mac": "rm -rf release && pnpm build && electron-builder --mac dir --universal --config electron-builder.dev.yml && node scripts/adhoc-sign-mac-app.mjs \"release/mac-universal/Baby Menu Dev.app\"",
+    "package:win": "node -e \"require('node:fs').rmSync('release',{recursive:true,force:true})\" && pnpm build && electron-builder --win --x64 --config electron-builder.dev.yml",
     "dist:mac": "pnpm package:mac && node scripts/create-dmg.mjs \"release/mac-universal/Baby Menu Dev.app\"",
     "test": "vitest run tests",
     "test:e2e": "vitest run tests/e2e-*.test.ts",
