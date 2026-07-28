@@ -8,6 +8,7 @@ const trayInstance = {
 
 const electronApp = {
   commandLine: { appendSwitch: vi.fn() },
+  disableHardwareAcceleration: vi.fn(),
   dock: { hide: vi.fn() },
   getAppPath: vi.fn(() => "/repo"),
   getPath: vi.fn((name: string) => (name === "home" ? "/home/test-user" : "/tmp")),
@@ -119,10 +120,12 @@ vi.mock("../src/main/shell-path", () => ({
   expandProcessPathForGuiLaunch: vi.fn(() => "/usr/bin:/bin"),
 }));
 
+const mockIsUncWindowsLaunch = vi.hoisted(() => vi.fn(() => false));
+
 vi.mock("../src/shared/paths", () => ({
   EXTENSIONS_DIR_ENV: "BABY_MENU_EXTENSIONS_DIR",
   getRepoRoot: vi.fn(() => "/repo"),
-  isUncWindowsLaunch: vi.fn(() => false),
+  isUncWindowsLaunch: mockIsUncWindowsLaunch,
 }));
 
 describe("startBabyMenuApp", () => {
@@ -367,5 +370,15 @@ describe("startBabyMenuApp", () => {
     expect((electronApp as { setActivationPolicy: ReturnType<typeof vi.fn> }).setActivationPolicy).toHaveBeenLastCalledWith(
       "accessory",
     );
+  });
+
+  it("disables the GPU sandbox when launched from a UNC Windows path", async () => {
+    mockIsUncWindowsLaunch.mockReturnValue(true);
+
+    await import("../src/main/app");
+
+    expect(electronApp.disableHardwareAcceleration).toHaveBeenCalled();
+    expect(electronApp.commandLine.appendSwitch).toHaveBeenCalledWith("in-process-gpu");
+    expect(electronApp.commandLine.appendSwitch).toHaveBeenCalledWith("disable-gpu");
   });
 });
