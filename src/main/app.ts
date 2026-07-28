@@ -72,6 +72,31 @@ if (!windowsAdapterLaunchRequest) {
   registerBabyMenuProtocolSchemes();
 }
 
+// Windows application identity must be set before app.whenReady() so the
+// taskbar groups the running instance under the correct AppUserModelID.
+if (!windowsAdapterLaunchRequest && process.platform === "win32") {
+  app.setAppUserModelId("com.kunchenguid.baby-menu");
+}
+
+// Single-instance lock: only the first process creates the tray, popover,
+// runtime, and background services. A second process quits immediately.
+let isPrimaryInstance = true;
+if (!windowsAdapterLaunchRequest) {
+  isPrimaryInstance = app.requestSingleInstanceLock();
+  if (isPrimaryInstance) {
+    app.on("second-instance", () => {
+      if (popoverWindow && !popoverWindow.isDestroyed()) {
+        if (!popoverWindow.isVisible()) {
+          popoverWindow.show();
+        }
+        popoverWindow.focus();
+      }
+    });
+  } else {
+    app.quit();
+  }
+}
+
 let popoverWindow: BrowserWindow | null = null;
 let activeTray: BabyMenuTray | null = null;
 let latestTrayBounds: Rectangle | null = null;
@@ -379,7 +404,7 @@ if (!process.env.VITEST) {
         app.exit(1);
       },
     );
-  } else {
+  } else if (isPrimaryInstance) {
     // Last-resort guard: an unhandled rejection here would otherwise leave a dead
     // app with a lingering dock icon and no tray, with no diagnostic in the logs.
     startBabyMenuApp().catch((error) => {
