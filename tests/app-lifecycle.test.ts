@@ -122,6 +122,7 @@ vi.mock("../src/main/shell-path", () => ({
 vi.mock("../src/shared/paths", () => ({
   EXTENSIONS_DIR_ENV: "BABY_MENU_EXTENSIONS_DIR",
   getRepoRoot: vi.fn(() => "/repo"),
+  isUncWindowsLaunch: vi.fn(() => false),
 }));
 
 describe("startBabyMenuApp", () => {
