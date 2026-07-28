@@ -44,11 +44,20 @@ describe("distribution config", () => {
     expect(config).toContain("hello-world/**");
     expect(config).toContain("to: tray");
     expect(config).toContain("baby_menuTemplate*.png");
+    expect(config).toContain("baby_menu.ico");
     expect(config).toContain("identity: null");
     expect(config).toContain("hardenedRuntime: false");
     expect(config).toContain("icon: assets/app-icon.icns");
     await expect(stat(resolve(import.meta.dirname, "../assets/app-icon.svg")).then((file) => file.isFile())).resolves.toBe(true);
     await expect(stat(resolve(import.meta.dirname, "../assets/app-icon.icns")).then((file) => file.isFile())).resolves.toBe(true);
+  });
+
+  it("includes Windows app icon and no NSIS installer", async () => {
+    const config = await readFile(resolve(import.meta.dirname, "../electron-builder.yml"), "utf8");
+
+    expect(config).toContain("win:");
+    expect(config).toContain("icon: assets/app-icon.ico");
+    expect(config).not.toContain("nsis:");
   });
 
   it("adds a release-please workflow that publishes the DMG and updates the Homebrew tap after a release", async () => {

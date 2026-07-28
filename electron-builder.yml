@@ -21,6 +21,7 @@ extraResources:
     to: tray
     filter:
       - baby_menuTemplate*.png
+      - baby_menu.ico
 
 asar: true
 
@@ -37,6 +38,9 @@ mac:
   hardenedRuntime: false
   gatekeeperAssess: false
   x64ArchFiles: Contents/Resources/app.asar.unpacked/node_modules/{@esbuild/**,esbuild/**,@tailwindcss/oxide-*/**,lightningcss-*/**,lightningcss/**}
+
+win:
+  icon: assets/app-icon.ico
 
 dmg:
   artifactName: Baby-Menu-${version}-universal.dmg

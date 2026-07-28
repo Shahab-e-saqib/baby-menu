@@ -43,7 +43,10 @@ export function createBabyMenuRuntimePaths(options: CreateBabyMenuRuntimePathsOp
       agentStateDir: join(cacheDir, "acp-sessions"),
       devExtensionSnapshotDir: join(cacheDir, "dev-extension-snapshots"),
       bundledExtensionTemplateDir: null,
-      trayIconPath: join(options.sourceRoot, "assets", "tray", "baby_menuTemplate.png"),
+      trayIconPath:
+        process.platform === "win32"
+          ? join(options.sourceRoot, "assets", "tray", "baby_menu.ico")
+          : join(options.sourceRoot, "assets", "tray", "baby_menuTemplate.png"),
       databasePath: join(cacheDir, "baby-menu.db"),
       // Dev/source: adapters are esbuild-bundled into the checkout's out/.
       adaptersDir: join(options.sourceRoot, "out", "adapters"),
@@ -68,7 +71,10 @@ export function createBabyMenuRuntimePaths(options: CreateBabyMenuRuntimePathsOp
     agentStateDir: join(cacheDir, "acp-sessions"),
     devExtensionSnapshotDir: join(cacheDir, "snapshots"),
     bundledExtensionTemplateDir: join(options.resourcesPath, "extensions-template"),
-    trayIconPath: join(options.resourcesPath, "tray", "baby_menuTemplate.png"),
+    trayIconPath:
+      process.platform === "win32"
+        ? join(options.resourcesPath, "tray", "baby_menu.ico")
+        : join(options.resourcesPath, "tray", "baby_menuTemplate.png"),
     databasePath: join(appDataRoot, "baby-menu.db"),
     // Packaged: adapters are asar-unpacked (a standalone Node process cannot read
     // inside app.asar), so they live alongside the asar in app.asar.unpacked.
