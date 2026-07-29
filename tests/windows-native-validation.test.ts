@@ -336,4 +336,40 @@ describe("windows-native-validation", () => {
     expect(beginIdx).toBeLessThan(jsonOutputIdx);
     expect(jsonOutputIdx).toBeLessThan(endIdx);
   });
+
+  // ---- Regression: descendant-cancellation quoting and top-level error handling ----
+
+  it("descendant-cancellation ManualGuidance does not use backslash-escaped quotes", () => {
+    // Backslash \" inside a double-quoted PowerShell string causes a
+    // non-terminating ParameterBindingException.  Must use "" escaping instead.
+    const dcLines = content.match(/descendant-cancellation[\s\S]*?ManualGuidance[^)]*\)/);
+    expect(dcLines).not.toBeNull();
+    expect(dcLines![0]).not.toContain('\\"');
+    // Must contain the correct tasklist filter with PowerShell-native double-quote escaping
+    expect(dcLines![0]).toMatch(/""IMAGENAME eq node\.exe""/);
+  });
+
+  it("sets $ErrorActionPreference to Stop for terminating errors", () => {
+    expect(content).toMatch(/\$ErrorActionPreference\s*=\s*'Stop'/);
+  });
+
+  it("trap handler uses non-throwing [Console]::Error.WriteLine not Write-Error", () => {
+    expect(content).toMatch(/^trap \{/m);
+    expect(content).toMatch(/exit 1/);
+    // The trap must avoid writing to the untrusted DiagnosticDir
+    const trapBlock = content.match(/^trap \{[\s\S]*?^}/m);
+    expect(trapBlock).not.toBeNull();
+    expect(trapBlock![0]).not.toMatch(/Write-Error/);
+    expect(trapBlock![0]).toMatch(/\[Console\]::Error\.WriteLine/);
+    expect(trapBlock![0]).toMatch(/env:TEMP/);
+  });
+
+  it("guard catch block uses non-throwing [Console]::Error.WriteLine not Write-Error", () => {
+    // Same rationale: Write-Error with $ErrorActionPreference=Stop would
+    // terminate and recurse into the trap handler.
+    const catchBlock = content.match(/catch \{[\s\S]*?exit 1/);
+    expect(catchBlock).not.toBeNull();
+    expect(catchBlock![0]).not.toMatch(/Write-Error/);
+    expect(catchBlock![0]).toMatch(/\[Console\]::Error\.WriteLine/);
+  });
 });

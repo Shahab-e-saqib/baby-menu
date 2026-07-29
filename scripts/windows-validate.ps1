@@ -42,6 +42,17 @@ param(
 # Bootstrap
 # ---------------------------------------------------------------------------
 
+$ErrorActionPreference = 'Stop'
+
+trap {
+    [Console]::Error.WriteLine("Fatal: $_")
+    if (-not $WhatIfPreference) {
+        $tempPath = Join-Path $env:TEMP "baby-menu-validation-fatal-$([DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')).txt"
+        "Fatal at $(Get-Date -Format 'o'): $_" | Out-File -FilePath $tempPath -Encoding utf8
+    }
+    exit 1
+}
+
 if (-not $DiagnosticDir) { $DiagnosticDir = "$InstallDir-diagnostic" }
 $script:Checks = New-Object System.Collections.ArrayList
 
@@ -509,7 +520,7 @@ function Invoke-UnsupportedCheck {
 
     Add-CheckResult -Name 'credential-inheritance' -Status 'skip' -Detail 'Requires adapter child-process execution with real agent credentials; not testable from standalone PS script without exposing secrets' -ManualGuidance "Run 'pnpm vitest run tests/adapter-child-env.test.ts tests/process-tree.test.ts' on Windows to verify env scoping and credential isolation. For credential non-exposure verification, inspect adapter driver sources in src/adapters/"
 
-    Add-CheckResult -Name 'descendant-cancellation' -Status 'skip' -Detail 'Requires real agent turn with long-running descendant; not testable from standalone PS script' -ManualGuidance "Run 'pnpm vitest run tests/process-tree.test.ts' on Windows. For live agent-turn cancellation, start the app, send a prompt to the agent, cancel mid-turn, and run 'tasklist /FI \"IMAGENAME eq node.exe\" /FO CSV' to verify no survivors"
+    Add-CheckResult -Name 'descendant-cancellation' -Status 'skip' -Detail 'Requires real agent turn with long-running descendant; not testable from standalone PS script' -ManualGuidance "Run 'pnpm vitest run tests/process-tree.test.ts' on Windows. For live agent-turn cancellation, start the app, send a prompt to the agent, cancel mid-turn, and run 'tasklist /FI ""IMAGENAME eq node.exe"" /FO CSV' to verify no survivors"
 }
 
 # ---------------------------------------------------------------------------
@@ -551,7 +562,7 @@ try {
     Assert-ExistingPathSafe -Path $UserDataDir -Label 'UserDataDir'
     Assert-ExistingPathSafe -Path $DiagnosticDir -Label 'DiagnosticDir'
 } catch {
-    Write-Error "Guard failed: $_"
+    [Console]::Error.WriteLine("Guard failed: $_")
     if (-not $WhatIfPreference) {
         $tempPath = Join-Path $env:TEMP "baby-menu-validation-guard-failure-$([DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')).txt"
         "Guard failed at $(Get-Date -Format 'o'): $_" | Out-File -FilePath $tempPath -Encoding utf8
