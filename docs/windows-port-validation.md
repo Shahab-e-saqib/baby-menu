@@ -150,3 +150,29 @@ Porting core ACP/change-session e2e (removing win32 skips in `tests/e2e-acp-runt
 ### E. Out of scope for this milestone entirely
 
 NSIS installer, Authenticode signing, update copy, recipe platform-filtering/parity, or any greenfield rewrite.
+
+## Native Windows validation runner
+
+A self-contained PowerShell validation runner lives at `scripts/windows-validate.ps1` (requires PowerShell 7+ on a native Windows host from a drive-letter path). It automates deterministic checks over an already-built NSIS installer and documents the boundary between automated evidence and still-manual GUI proof.
+
+**Plan-only (no mutation):**
+```
+powershell -File scripts/windows-validate.ps1 <InstallerPath> <InstallDir> <UserDataDir> -WhatIf
+```
+
+**Opt-in install/uninstall/launch:**
+```
+powershell -File scripts/windows-validate.ps1 <InstallerPath> <InstallDir> <UserDataDir> -AllowInstall [-AllowUninstall] [-AllowLaunch]
+```
+
+Evidence JSON (pass/fail/skip with secret redaction) is written under `<InstallDir>-diagnostic/evidence-<timestamp>.json`.
+
+**Boundary:** All checks in the runner are either automated deterministic assertions (pass/fail) or explicitly marked `skip` with `ManualGuidance`. The following are genuinely manual GUI-only checks that a human must verify:
+- tray icon appearance on the taskbar
+- popover open/close/windowing behavior
+- widget layout rendering
+- settings UI
+- agent conversation UI
+- Keep/Undo bar interaction
+
+The contract `tests/windows-native-validation.test.ts` validates the runner's structure, guards, and required check domains without executing the script.
