@@ -382,6 +382,77 @@ function Invoke-SentinelVerify {
     }
 }
 
+function Backup-Environment {
+    param([string[]]$Variables)
+    $backup = @{}
+    foreach ($var in $Variables) {
+        $backup[$var] = [Environment]::GetEnvironmentVariable($var, 'Process')
+    }
+    return $backup
+}
+
+function Restore-Environment {
+    param([hashtable]$Backup)
+    foreach ($entry in $Backup.GetEnumerator()) {
+        $key = $entry.Key
+        $value = $entry.Value
+        if ($null -ne $value) {
+            [Environment]::SetEnvironmentVariable($key, $value, 'Process')
+        } else {
+            Remove-Item "Env:$key" -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Assert-ProfilePathsSafe {
+    param([hashtable]$ProfilePaths, [string]$UserDataDir)
+    $userDataDirCanon = [System.IO.Path]::GetFullPath($UserDataDir).TrimEnd('\')
+    foreach ($entry in $ProfilePaths.GetEnumerator()) {
+        $dirCanon = [System.IO.Path]::GetFullPath($entry.Value)
+        if (-not $dirCanon.StartsWith("$userDataDirCanon\", [StringComparison]::OrdinalIgnoreCase) -and $dirCanon -ne $userDataDirCanon) {
+            throw "Isolated profile path $($entry.Key)=$dirCanon is not under UserDataDir $userDataDirCanon"
+        }
+    }
+}
+
+function New-DirectoryManifest {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path $Path)) { return $null }
+    $manifest = @{}
+    $rootCanon = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $entries = Get-ChildItem -Path $Path -Recurse -ErrorAction SilentlyContinue
+    foreach ($entry in $entries) {
+        $relPath = $entry.FullName.Substring($rootCanon.Length + 1)
+        $info = @{
+            Length = if ($entry.PSIsContainer) { 0 } else { $entry.Length }
+            LastWrite = $entry.LastWriteTimeUtc.ToString('o')
+        }
+        if (-not $entry.PSIsContainer) {
+            $hash = Get-FileHash -Path $entry.FullName -Algorithm SHA256 -ErrorAction SilentlyContinue
+            if ($hash) { $info['SHA256'] = $hash.Hash }
+        }
+        $manifest[$relPath] = $info
+    }
+    return $manifest
+}
+
+function Compare-DirectoryManifest {
+    param([hashtable]$Before, [hashtable]$After)
+    if ($null -eq $Before -and $null -eq $After) { return $true }
+    if ($null -eq $Before -or $null -eq $After) { return $false }
+    if ($Before.Count -ne $After.Count) { return $false }
+    foreach ($key in $Before.Keys) {
+        if (-not $After.ContainsKey($key)) { return $false }
+        $b = $Before[$key]
+        $a = $After[$key]
+        if ($b.Length -ne $a.Length) { return $false }
+        if ($b.LastWrite -ne $a.LastWrite) { return $false }
+        if ($b.ContainsKey('SHA256') -xor $a.ContainsKey('SHA256')) { return $false }
+        if ($b.ContainsKey('SHA256') -and $b.SHA256 -ne $a.SHA256) { return $false }
+    }
+    return $true
+}
+
 function Invoke-BoundedLaunchCheck {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param()
@@ -390,7 +461,7 @@ function Invoke-BoundedLaunchCheck {
         return
     }
     if ($WhatIfPreference) {
-        Add-CheckResult -Name 'bounded-launch' -Status 'skip' -Detail 'Plan-only: would launch Baby Menu with bounded timeout and forced cleanup'
+        Add-CheckResult -Name 'bounded-launch' -Status 'skip' -Detail 'Plan-only: would launch Baby Menu with bounded timeout, forced cleanup, and isolated profile directories under UserDataDir'
         return
     }
     Write-Host "  [EXEC] Launching Baby Menu (timeout=${LaunchTimeoutSeconds}s)"
@@ -404,63 +475,173 @@ function Invoke-BoundedLaunchCheck {
         return
     }
 
-    $proc = Start-Process -FilePath $exePath -PassThru -NoNewWindow
-    $pid = $proc.Id
-    Write-Host "  [EXEC] Launched PID $pid"
-
-    # Wait with timeout
-    $elapsed = 0
-    $interval = 2
-    while ($elapsed -lt $LaunchTimeoutSeconds) {
-        if ($proc.HasExited) { break }
-        Start-Sleep -Seconds $interval
-        $elapsed += $interval
-        $proc.Refresh()
-    }
-
-    # Force-kill process tree
-    if (-not $proc.HasExited) {
-        Write-Host "  [EXEC] Timeout reached. Force-killing PID $pid and descendants"
-        & taskkill /T /F /PID $pid 2>&1 | Out-Null
-        Start-Sleep -Seconds 1
-        $proc.Refresh()
-    }
-
-    # Enumerate and kill every process whose ExecutablePath is under InstallDir
-    Start-Sleep -Seconds 2
+    # Check 1: Executable is under InstallDir
+    $exeDir = [System.IO.Path]::GetDirectoryName($exePath).TrimEnd('\')
     $installDirCanon = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
-    $allProcesses = Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue
-    $installDirProcs = @()
-    foreach ($p in $allProcesses) {
-        if ($p.ExecutablePath -and $p.ProcessId -ne $pid) {
-            $exeDir = [System.IO.Path]::GetDirectoryName($p.ExecutablePath).TrimEnd('\')
-            if ($exeDir -eq $installDirCanon -or $exeDir.StartsWith("$installDirCanon\", [StringComparison]::OrdinalIgnoreCase)) {
-                $installDirProcs += $p
-                & taskkill /T /F /PID $p.ProcessId 2>&1 | Out-Null
+    if ($exeDir -ne $installDirCanon -and -not $exeDir.StartsWith("$installDirCanon\", [StringComparison]::OrdinalIgnoreCase)) {
+        Add-CheckResult -Name 'bounded-launch-exe-under-installdir' -Status 'fail' -Detail "Executable path $exePath is not under InstallDir $InstallDir"
+        return
+    }
+    Add-CheckResult -Name 'bounded-launch-exe-under-installdir' -Status 'pass' -Detail "Executable $exePath is under InstallDir"
+
+    # Create isolated child-profile directories under UserDataDir
+    $profileIsolationRoot = Join-Path $UserDataDir "child-profile"
+    $isolatedDirs = @{
+        APPDATA      = Join-Path $profileIsolationRoot "AppData-Roaming"
+        LOCALAPPDATA = Join-Path $profileIsolationRoot "AppData-Local"
+        USERPROFILE  = Join-Path $profileIsolationRoot "UserProfile"
+        HOME         = Join-Path $profileIsolationRoot "Home"
+    }
+
+    # Verify isolated paths are under UserDataDir
+    try {
+        Assert-ProfilePathsSafe -ProfilePaths $isolatedDirs -UserDataDir $UserDataDir
+    } catch {
+        Add-CheckResult -Name 'bounded-launch-profile-isolation' -Status 'fail' -Detail "Profile isolation path safety check failed: $_"
+        return
+    }
+
+    # Create isolated profile directories
+    foreach ($dir in $isolatedDirs.Values) {
+        if (-not (Test-Path $dir)) {
+            $null = New-Item -ItemType Directory -Path $dir -Force
+        }
+    }
+
+    # Snapshot parent environment, set isolated paths, then launch
+    $savedEnv = Backup-Environment -Variables @('APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'HOME')
+
+    # Capture manifests of real profile subdirectories before any env modification
+    $manifestPaths = @()
+    if ($savedEnv['APPDATA']) { $manifestPaths += @{Path = Join-Path $savedEnv['APPDATA'] 'baby-menu'; Label = 'APPDATA\baby-menu'} }
+    if ($savedEnv['LOCALAPPDATA']) {
+        $manifestPaths += @{Path = Join-Path $savedEnv['LOCALAPPDATA'] 'baby-menu'; Label = 'LOCALAPPDATA\baby-menu'}
+        $manifestPaths += @{Path = Join-Path $savedEnv['LOCALAPPDATA'] 'Baby Menu'; Label = 'LOCALAPPDATA\Baby Menu'}
+    }
+    if ($savedEnv['USERPROFILE']) { $manifestPaths += @{Path = Join-Path $savedEnv['USERPROFILE'] '.baby-menu'; Label = 'USERPROFILE\.baby-menu'} }
+    $manifestsBefore = @{}
+    foreach ($mp in $manifestPaths) {
+        $canonKey = [System.IO.Path]::GetFullPath($mp.Path).ToUpperInvariant()
+        $manifestsBefore[$canonKey] = New-DirectoryManifest -Path $mp.Path
+    }
+
+    $launchFailed = $false
+    try {
+        foreach ($entry in $isolatedDirs.GetEnumerator()) {
+            [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, 'Process')
+        }
+        # Log only the root isolation path, never the individual values
+        Write-Host "  [EXEC] Isolated profile root: $profileIsolationRoot"
+
+        $proc = Start-Process -FilePath $exePath -PassThru -NoNewWindow
+        $launchedPid = $proc.Id
+        Write-Host "  [EXEC] Launched PID $launchedPid"
+
+        # Wait with timeout
+        $elapsed = 0
+        $interval = 2
+        while ($elapsed -lt $LaunchTimeoutSeconds) {
+            if ($proc.HasExited) { break }
+            Start-Sleep -Seconds $interval
+            $elapsed += $interval
+            $proc.Refresh()
+        }
+
+        # Force-kill process tree
+        if (-not $proc.HasExited) {
+            Write-Host "  [EXEC] Timeout reached. Force-killing PID $launchedPid and descendants"
+            & taskkill /T /F /PID $launchedPid 2>&1 | Out-Null
+            Start-Sleep -Seconds 1
+            $proc.Refresh()
+        }
+
+        # Enumerate and kill every process whose ExecutablePath is under InstallDir
+        Start-Sleep -Seconds 2
+        $allProcesses = Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue
+        $installDirProcs = @()
+        foreach ($p in $allProcesses) {
+            if ($p.ExecutablePath -and $p.ProcessId -ne $launchedPid) {
+                $pexDir = [System.IO.Path]::GetDirectoryName($p.ExecutablePath).TrimEnd('\')
+                if ($pexDir -eq $installDirCanon -or $pexDir.StartsWith("$installDirCanon\", [StringComparison]::OrdinalIgnoreCase)) {
+                    $installDirProcs += $p
+                    & taskkill /T /F /PID $p.ProcessId 2>&1 | Out-Null
+                }
             }
         }
-    }
-    Start-Sleep -Seconds 1
+        Start-Sleep -Seconds 1
 
-    # Final survivor check
-    $remaining = Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-        $_.ExecutablePath -and $_.ProcessId -ne $pid -and $_.ProcessId -ne 0
+        # Final survivor check
+        $remaining = Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+            $_.ExecutablePath -and $_.ProcessId -ne $launchedPid -and $_.ProcessId -ne 0
+        }
+        $survivors = @()
+        foreach ($p in $remaining) {
+            $pexDir = [System.IO.Path]::GetDirectoryName($p.ExecutablePath).TrimEnd('\')
+            if ($pexDir -eq $installDirCanon -or $pexDir.StartsWith("$installDirCanon\", [StringComparison]::OrdinalIgnoreCase)) {
+                $survivors += $p
+            }
+        }
+
+        if ($proc.HasExited -and $survivors.Count -eq 0) {
+            Add-CheckResult -Name 'bounded-launch' -Status 'pass' -Detail "Launched PID $launchedPid, exited after ${elapsed}s, no descendants under InstallDir remain"
+        } elseif ($proc.HasExited) {
+            Add-CheckResult -Name 'bounded-launch' -Status 'fail' -Detail "$($survivors.Count) surviving process(es) under InstallDir after forced cleanup"
+            $launchFailed = $true
+        } else {
+            Add-CheckResult -Name 'bounded-launch' -Status 'fail' -Detail "PID $launchedPid still alive after forced cleanup"
+            $launchFailed = $true
+        }
+
+        # Isolated-write observation: verify isolated profile dirs captured app data
+        if (-not $launchFailed) {
+            $isolatedAppDataFiles = Get-ChildItem -Path $isolatedDirs['APPDATA'] -Recurse -ErrorAction SilentlyContinue
+            $isolatedLocalAppDataFiles = Get-ChildItem -Path $isolatedDirs['LOCALAPPDATA'] -Recurse -ErrorAction SilentlyContinue
+            $wroteToIsolated = ($isolatedAppDataFiles.Count -gt 0) -or ($isolatedLocalAppDataFiles.Count -gt 0)
+
+            if ($wroteToIsolated) {
+                Add-CheckResult -Name 'bounded-launch-profile-writes-contained' -Status 'pass' -Detail "Profile writes captured under isolated paths under UserDataDir"
+            } else {
+                Add-CheckResult -Name 'bounded-launch-profile-writes-contained' -Status 'pass' -Detail "No detectable profile writes during bounded launch (app may not have created profile data within timeout)"
+            }
+        }
+    } catch {
+        $launchFailed = $true
+        Write-Host "  [EXEC] Launch error: $_"
+        Add-CheckResult -Name 'bounded-launch' -Status 'fail' -Detail "Launch threw: $_"
+    } finally {
+        # Restore every parent environment variable - runs even on Start-Process failure
+        Restore-Environment -Backup $savedEnv
+        Write-Host "  [EXEC] Parent environment variables restored"
     }
-    $survivors = @()
-    foreach ($p in $remaining) {
-        $exeDir = [System.IO.Path]::GetDirectoryName($p.ExecutablePath).TrimEnd('\') -eq ''
-        if (-not $exeDir) { $exeDir = [System.IO.Path]::GetDirectoryName($p.ExecutablePath).TrimEnd('\') }
-        if ($exeDir -eq $installDirCanon -or $exeDir.StartsWith("$installDirCanon\", [StringComparison]::OrdinalIgnoreCase)) {
-            $survivors += $p
+
+    # Verify environment was restored
+    $allRestored = $true
+    foreach ($entry in $savedEnv.GetEnumerator()) {
+        $current = [Environment]::GetEnvironmentVariable($entry.Key, 'Process')
+        if ($current -ne $entry.Value) { $allRestored = $false; break }
+    }
+    if ($allRestored) {
+        Add-CheckResult -Name 'bounded-launch-env-restored' -Status 'pass' -Detail 'All parent environment variables restored after launch'
+    } else {
+        Add-CheckResult -Name 'bounded-launch-env-restored' -Status 'fail' -Detail 'Some parent environment variables were not properly restored'
+    }
+
+    # Manifest-based profile-leak check: compare before/after manifests of real profile subdirectories
+    $manifestUnchanged = $true
+    $manifestFailureDetails = @()
+    foreach ($mp in $manifestPaths) {
+        $canonKey = [System.IO.Path]::GetFullPath($mp.Path).ToUpperInvariant()
+        $before = $manifestsBefore[$canonKey]
+        $after = New-DirectoryManifest -Path $mp.Path
+        if (-not (Compare-DirectoryManifest -Before $before -After $after)) {
+            $manifestUnchanged = $false
+            $manifestFailureDetails += $mp.Label
         }
     }
-
-    if ($proc.HasExited -and $survivors.Count -eq 0) {
-        Add-CheckResult -Name 'bounded-launch' -Status 'pass' -Detail "Launched PID $pid, exited after ${elapsed}s, no descendants under InstallDir remain"
-    } elseif ($proc.HasExited) {
-        Add-CheckResult -Name 'bounded-launch' -Status 'fail' -Detail "$($survivors.Count) surviving process(es) under InstallDir after forced cleanup"
+    if ($manifestUnchanged) {
+        Add-CheckResult -Name 'bounded-launch-profile-manifest-unchanged' -Status 'pass' -Detail 'Real profile subdirectories unchanged after bounded launch'
     } else {
-        Add-CheckResult -Name 'bounded-launch' -Status 'fail' -Detail "PID $pid still alive after forced cleanup"
+        Add-CheckResult -Name 'bounded-launch-profile-manifest-unchanged' -Status 'fail' -Detail "Real profile subdirectories changed after bounded launch: $($manifestFailureDetails -join ', ')"
     }
 }
 
