@@ -106,6 +106,7 @@ describe("Windows shell lifecycle", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
+    vi.spyOn(console, "warn");
     electronApp.isPackaged = false;
     electronApp.requestSingleInstanceLock.mockReset();
     electronApp.requestSingleInstanceLock.mockReturnValue(true);
@@ -141,6 +142,36 @@ describe("Windows shell lifecycle", () => {
 
     expect(electronApp.requestSingleInstanceLock).toHaveBeenCalledExactlyOnceWith();
     expect(electronApp.quit).toHaveBeenCalledExactlyOnceWith();
+  });
+
+  it("emits a structured console.warn on lock denial before quitting", async () => {
+    electronApp.requestSingleInstanceLock.mockReturnValue(false);
+
+    await import("../src/main/app");
+
+    expect(console.warn).toHaveBeenCalledTimes(1);
+    const warnArg = (console.warn as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(warnArg).toBeTypeOf("string");
+    const parsed = JSON.parse(warnArg);
+    expect(parsed).toMatchObject({
+      event: "second-instance-rejected",
+      platform: process.platform,
+      isPackaged: false,
+    });
+    expect(Object.keys(parsed)).toStrictEqual(["event", "platform", "isPackaged"]);
+    expect(electronApp.quit).toHaveBeenCalledExactlyOnceWith();
+    // Verify warn was called before quit
+    const warnCallIndex = (console.warn as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    const quitCallIndex = electronApp.quit.mock.invocationCallOrder[0];
+    expect(warnCallIndex).toBeLessThan(quitCallIndex);
+  });
+
+  it("does not emit a warning when the single-instance lock is acquired", async () => {
+    electronApp.requestSingleInstanceLock.mockReturnValue(true);
+
+    await import("../src/main/app");
+
+    expect(console.warn).not.toHaveBeenCalled();
   });
 
   it("shows and focuses the popover when a second-instance event fires and popover is ready", async () => {

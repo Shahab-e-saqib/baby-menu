@@ -93,6 +93,13 @@ if (!windowsAdapterLaunchRequest) {
       }
     });
   } else {
+    console.warn(
+      JSON.stringify({
+        event: "second-instance-rejected",
+        platform: process.platform,
+        isPackaged: app.isPackaged,
+      }),
+    );
     app.quit();
   }
 }
