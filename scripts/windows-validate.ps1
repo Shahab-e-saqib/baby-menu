@@ -457,11 +457,13 @@ function Invoke-BoundedLaunchCheck {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param()
     if (-not $AllowLaunch) {
-        Add-CheckResult -Name 'bounded-launch' -Status 'skip' -Detail 'Launch requires -AllowLaunch' -ManualGuidance 'Run with -AllowLaunch to start the app, verify tray icon appears, then wait for automatic process-tree cleanup (forced after timeout)'
+        Add-CheckResult -Name 'bounded-launch-persistence' -Status 'skip' -Detail 'Launch requires -AllowLaunch' -ManualGuidance 'Run with -AllowLaunch to start the app, verify persistence through timeout, then cleanup'
+        Add-CheckResult -Name 'bounded-launch-cleanup' -Status 'skip' -Detail 'Cleanup requires -AllowLaunch'
         return
     }
     if ($WhatIfPreference) {
-        Add-CheckResult -Name 'bounded-launch' -Status 'skip' -Detail 'Plan-only: would launch Baby Menu with bounded timeout, forced cleanup, and isolated profile directories under UserDataDir'
+        Add-CheckResult -Name 'bounded-launch-persistence' -Status 'skip' -Detail 'Plan-only: would launch Baby Menu with bounded timeout'
+        Add-CheckResult -Name 'bounded-launch-cleanup' -Status 'skip' -Detail 'Plan-only: would force-kill process tree'
         return
     }
     Write-Host "  [EXEC] Launching Baby Menu (timeout=${LaunchTimeoutSeconds}s)"
@@ -471,7 +473,8 @@ function Invoke-BoundedLaunchCheck {
         $exePath = [System.IO.Path]::Combine($InstallDir, 'BabyMenu.exe')
     }
     if (-not (Test-Path $exePath)) {
-        Add-CheckResult -Name 'bounded-launch' -Status 'fail' -Detail "Executable not found in $InstallDir"
+        Add-CheckResult -Name 'bounded-launch-persistence' -Status 'fail' -Detail "Executable not found in $InstallDir"
+        Add-CheckResult -Name 'bounded-launch-cleanup' -Status 'skip' -Detail 'Cleanup skipped: executable not found'
         return
     }
 
@@ -480,6 +483,8 @@ function Invoke-BoundedLaunchCheck {
     $installDirCanon = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
     if ($exeDir -ne $installDirCanon -and -not $exeDir.StartsWith("$installDirCanon\", [StringComparison]::OrdinalIgnoreCase)) {
         Add-CheckResult -Name 'bounded-launch-exe-under-installdir' -Status 'fail' -Detail "Executable path $exePath is not under InstallDir $InstallDir"
+        Add-CheckResult -Name 'bounded-launch-persistence' -Status 'skip' -Detail 'Skipped: exe not under InstallDir'
+        Add-CheckResult -Name 'bounded-launch-cleanup' -Status 'skip' -Detail 'Skipped: exe not under InstallDir'
         return
     }
     Add-CheckResult -Name 'bounded-launch-exe-under-installdir' -Status 'pass' -Detail "Executable $exePath is under InstallDir"
@@ -498,6 +503,8 @@ function Invoke-BoundedLaunchCheck {
         Assert-ProfilePathsSafe -ProfilePaths $isolatedDirs -UserDataDir $UserDataDir
     } catch {
         Add-CheckResult -Name 'bounded-launch-profile-isolation' -Status 'fail' -Detail "Profile isolation path safety check failed: $_"
+        Add-CheckResult -Name 'bounded-launch-persistence' -Status 'skip' -Detail 'Skipped: profile isolation check failed'
+        Add-CheckResult -Name 'bounded-launch-cleanup' -Status 'skip' -Detail 'Skipped: profile isolation check failed'
         return
     }
 
@@ -525,7 +532,17 @@ function Invoke-BoundedLaunchCheck {
         $manifestsBefore[$canonKey] = New-DirectoryManifest -Path $mp.Path
     }
 
-    $launchFailed = $false
+    $persistenceRecorded = $false
+    $cleanupRecorded = $false
+    $procLaunched = $false
+    $exitCode = $null
+    $stdoutLength = 0
+    $stderrLength = 0
+    $stdoutDigest = $null
+    $stderrDigest = $null
+    $singleInstanceRejected = $false
+    $elapsed = 0
+
     try {
         foreach ($entry in $isolatedDirs.GetEnumerator()) {
             [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, 'Process')
@@ -533,12 +550,25 @@ function Invoke-BoundedLaunchCheck {
         # Log only the root isolation path, never the individual values
         Write-Host "  [EXEC] Isolated profile root: $profileIsolationRoot"
 
-        $proc = Start-Process -FilePath $exePath -PassThru -NoNewWindow
+        # Use ProcessStartInfo for exit code capture and bounded stdout/stderr
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $exePath
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.CreateNoWindow = $true
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        $procLaunched = $true
         $launchedPid = $proc.Id
         Write-Host "  [EXEC] Launched PID $launchedPid"
 
-        # Wait with timeout
-        $elapsed = 0
+        # Start async output readers to avoid deadlock
+        $systemStdOut = $proc.StandardOutput
+        $systemStdErr = $proc.StandardError
+        $stdoutTask = $systemStdOut.ReadToEndAsync()
+        $stderrTask = $systemStdErr.ReadToEndAsync()
+
+        # Wait with timeout, polling for early exit
         $interval = 2
         while ($elapsed -lt $LaunchTimeoutSeconds) {
             if ($proc.HasExited) { break }
@@ -547,16 +577,98 @@ function Invoke-BoundedLaunchCheck {
             $proc.Refresh()
         }
 
-        # Force-kill process tree
+        # Snapshot alive-at-deadline immediately after the polling loop,
+        # BEFORE any WaitForExit or kill.  A process that exited during the
+        # final sleep interval is NOT alive at the deadline.
+        $wasAliveAtDeadline = -not $proc.HasExited
+
+        # === PERSISTENCE CHECK ===
+        if ($wasAliveAtDeadline) {
+            # Process survived the full LaunchTimeoutSeconds — record pass,
+            # then proceed to controlled kill.
+            Add-CheckResult -Name 'bounded-launch-persistence' -Status 'pass' -Detail "PID $launchedPid survived ${LaunchTimeoutSeconds}s timeout"
+        } else {
+            # Process exited before or during the final polling interval.
+            # Brief wait to capture exit code, then record fail.
+            $proc.WaitForExit(2000) | Out-Null
+            if ($proc.HasExited) { $exitCode = $proc.ExitCode }
+            Add-CheckResult -Name 'bounded-launch-persistence' -Status 'fail' -Detail "PID $launchedPid exited (exit code $($exitCode))"
+        }
+        $persistenceRecorded = $true
+
+        # === CONTROLLED KILL ===
         if (-not $proc.HasExited) {
-            Write-Host "  [EXEC] Timeout reached. Force-killing PID $launchedPid and descendants"
+            Write-Host "  [EXEC] Controlled kill of PID $launchedPid and descendants"
             & taskkill /T /F /PID $launchedPid 2>&1 | Out-Null
             Start-Sleep -Seconds 1
             $proc.Refresh()
         }
 
-        # Enumerate and kill every process whose ExecutablePath is under InstallDir
-        Start-Sleep -Seconds 2
+        # Wait for exit (brief) to capture exit code if not already captured
+        if (-not $proc.HasExited) {
+            $proc.WaitForExit(5000) | Out-Null
+        } else {
+            $proc.WaitForExit(1000) | Out-Null
+        }
+        if ($proc.HasExited -and $null -eq $exitCode) {
+            $exitCode = $proc.ExitCode
+        }
+
+        # Drain output readers with bounded wait
+        try {
+            $stdoutTask.Wait(5000) | Out-Null
+            $stderrTask.Wait(5000) | Out-Null
+        } catch {
+            # Reader timeout is non-fatal
+        }
+
+        # Cap and digest output — never embed raw text in check details.
+        $maxCap = 65536
+        if ($stdoutTask.IsCompleted -and $stdoutTask.Result) {
+            $rawStdout = $stdoutTask.Result
+            $stdoutLength = $rawStdout.Length
+            if ($stdoutLength -gt 0) {
+                $stdoutDigest = [System.BitConverter]::ToString(
+                    [System.Security.Cryptography.SHA256]::Create().ComputeHash(
+                        [System.Text.Encoding]::UTF8.GetBytes($rawStdout)
+                    )
+                ).Replace('-', '') -replace '(?i)(AAAA[ A-Za-z0-9+/]{20,}={0,2})', '**REDACTED-BASE64**'
+            }
+            if ($rawStdout.Length -gt $maxCap) {
+                $rawStdout = $rawStdout.Substring(0, $maxCap)
+            }
+        }
+        if ($stderrTask.IsCompleted -and $stderrTask.Result) {
+            $rawStderr = $stderrTask.Result
+            $stderrLength = $rawStderr.Length
+            if ($stderrLength -gt 0) {
+                $stderrDigest = [System.BitConverter]::ToString(
+                    [System.Security.Cryptography.SHA256]::Create().ComputeHash(
+                        [System.Text.Encoding]::UTF8.GetBytes($rawStderr)
+                    )
+                ).Replace('-', '') -replace '(?i)(AAAA[ A-Za-z0-9+/]{20,}={0,2})', '**REDACTED-BASE64**'
+            }
+        }
+
+        # Parse both capped stdout and stderr line-by-line for the exact safe
+        # second-instance-rejected JSON marker.  Accept only a single line that
+        # matches event/platform/isPackaged keys and values; ignore all other
+        # raw lines (including console.warn on stderr, startup logs, etc.).
+        $secondInstanceLinePattern = '^\s*\{\s*"event"\s*:\s*"second-instance-rejected"\s*,\s*"platform"\s*:\s*"win32"\s*,\s*"isPackaged"\s*:\s*(true|false)\s*\}\s*$'
+        if ($rawStdout) {
+            foreach ($line in ($rawStdout -split "`n")) {
+                if ($line -match $secondInstanceLinePattern) { $singleInstanceRejected = $true; break }
+            }
+        }
+        if (-not $singleInstanceRejected -and $rawStderr) {
+            foreach ($line in ($rawStderr -split "`n")) {
+                if ($line -match $secondInstanceLinePattern) { $singleInstanceRejected = $true; break }
+            }
+        }
+
+        # === CLEANUP ===
+        # Best-effort sweep: kill every process whose ExecutablePath is under InstallDir.
+        Start-Sleep -Seconds 1
         $allProcesses = Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue
         $installDirProcs = @()
         foreach ($p in $allProcesses) {
@@ -582,39 +694,92 @@ function Invoke-BoundedLaunchCheck {
             }
         }
 
-        if ($proc.HasExited -and $survivors.Count -eq 0) {
-            Add-CheckResult -Name 'bounded-launch' -Status 'pass' -Detail "Launched PID $launchedPid, exited after ${elapsed}s, no descendants under InstallDir remain"
-        } elseif ($proc.HasExited) {
-            Add-CheckResult -Name 'bounded-launch' -Status 'fail' -Detail "$($survivors.Count) surviving process(es) under InstallDir after forced cleanup"
-            $launchFailed = $true
+        # Cleanup check: one pass/fail independent of persistence
+        if ($survivors.Count -eq 0) {
+            Add-CheckResult -Name 'bounded-launch-cleanup' -Status 'pass' -Detail "No survivors after forced cleanup (launch PID=$launchedPid)"
         } else {
-            Add-CheckResult -Name 'bounded-launch' -Status 'fail' -Detail "PID $launchedPid still alive after forced cleanup"
-            $launchFailed = $true
+            Add-CheckResult -Name 'bounded-launch-cleanup' -Status 'fail' -Detail "$($survivors.Count) surviving process(es) under InstallDir after forced cleanup (launch PID=$launchedPid)"
         }
+        $cleanupRecorded = $true
+
+        # Diagnostic detail: safe marker plus bounded exit/output summary
+        $diagnosticParts = @()
+        $diagnosticParts += "singleInstanceRejected=$singleInstanceRejected"
+        $diagnosticParts += "exitCode=$($exitCode)"
+        $diagnosticParts += "stdoutLen=$stdoutLength"
+        $diagnosticParts += "stderrLen=$stderrLength"
+        if ($stdoutDigest) { $diagnosticParts += "stdoutSHA256=$stdoutDigest" }
+        if ($stderrDigest) { $diagnosticParts += "stderrSHA256=$stderrDigest" }
+        Add-CheckResult -Name 'bounded-launch-diagnostics' -Status 'pass' -Detail ($diagnosticParts -join '; ')
 
         # Isolated-write observation: verify isolated profile dirs captured app data
-        if (-not $launchFailed) {
-            $isolatedAppDataFiles = Get-ChildItem -Path $isolatedDirs['APPDATA'] -Recurse -ErrorAction SilentlyContinue
-            $isolatedLocalAppDataFiles = Get-ChildItem -Path $isolatedDirs['LOCALAPPDATA'] -Recurse -ErrorAction SilentlyContinue
-            $wroteToIsolated = ($isolatedAppDataFiles.Count -gt 0) -or ($isolatedLocalAppDataFiles.Count -gt 0)
+        $isolatedAppDataFiles = Get-ChildItem -Path $isolatedDirs['APPDATA'] -Recurse -ErrorAction SilentlyContinue
+        $isolatedLocalAppDataFiles = Get-ChildItem -Path $isolatedDirs['LOCALAPPDATA'] -Recurse -ErrorAction SilentlyContinue
+        $wroteToIsolated = ($isolatedAppDataFiles.Count -gt 0) -or ($isolatedLocalAppDataFiles.Count -gt 0)
 
-            if ($wroteToIsolated) {
-                Add-CheckResult -Name 'bounded-launch-profile-writes-contained' -Status 'pass' -Detail "Profile writes captured under isolated paths under UserDataDir"
-            } else {
-                Add-CheckResult -Name 'bounded-launch-profile-writes-contained' -Status 'pass' -Detail "No detectable profile writes during bounded launch (app may not have created profile data within timeout)"
-            }
+        if ($wroteToIsolated) {
+            Add-CheckResult -Name 'bounded-launch-profile-writes-contained' -Status 'pass' -Detail "Profile writes captured under isolated paths under UserDataDir"
+        } else {
+            Add-CheckResult -Name 'bounded-launch-profile-writes-contained' -Status 'pass' -Detail "No detectable profile writes during bounded launch (app may not have created profile data within timeout)"
         }
     } catch {
-        $launchFailed = $true
         Write-Host "  [EXEC] Launch error: $_"
-        Add-CheckResult -Name 'bounded-launch' -Status 'fail' -Detail "Launch threw: $_"
+        if (-not $persistenceRecorded) {
+            Add-CheckResult -Name 'bounded-launch-persistence' -Status 'fail' -Detail "Launch threw before persistence check: $_"
+        }
+        # Guarantee exactly one cleanup result on every catch path.
+        # If process was launched, do a best-effort sweep regardless of how far we got.
+        $cleanupSwept = $false
+        if ($procLaunched) {
+            try {
+                $allProcs = Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue
+                $installDirProcsCatch = @()
+                foreach ($p in $allProcs) {
+                    if ($p.ExecutablePath) {
+                        $pexDirCatch = [System.IO.Path]::GetDirectoryName($p.ExecutablePath).TrimEnd('\')
+                        if ($pexDirCatch -eq $installDirCanon -or $pexDirCatch.StartsWith("$installDirCanon\", [StringComparison]::OrdinalIgnoreCase)) {
+                            $installDirProcsCatch += $p
+                            & taskkill /T /F /PID $p.ProcessId 2>&1 | Out-Null
+                        }
+                    }
+                }
+                Start-Sleep -Seconds 1
+                $remainingCatch = Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+                    $_.ExecutablePath -and $_.ProcessId -ne 0
+                }
+                $survivorsCatch = @()
+                foreach ($p in $remainingCatch) {
+                    $pexDirCatch = [System.IO.Path]::GetDirectoryName($p.ExecutablePath).TrimEnd('\')
+                    if ($pexDirCatch -eq $installDirCanon -or $pexDirCatch.StartsWith("$installDirCanon\", [StringComparison]::OrdinalIgnoreCase)) {
+                        $survivorsCatch += $p
+                    }
+                }
+                $cleanupSwept = $true
+                if ($survivorsCatch.Count -eq 0) {
+                    Add-CheckResult -Name 'bounded-launch-cleanup' -Status 'pass' -Detail "No survivors after catch sweep (launch PID=$launchedPid)"
+                } else {
+                    Add-CheckResult -Name 'bounded-launch-cleanup' -Status 'fail' -Detail "$($survivorsCatch.Count) surviving process(es) after catch sweep (launch PID=$launchedPid)"
+                }
+                $cleanupRecorded = $true
+            } catch {
+                # Sweep itself threw — best-effort exhausted
+            }
+        }
+        if (-not $cleanupRecorded) {
+            if ($procLaunched) {
+                Add-CheckResult -Name 'bounded-launch-cleanup' -Status 'fail' -Detail 'Cleanup could not be completed after catch (sweep failed)'
+            } else {
+                Add-CheckResult -Name 'bounded-launch-cleanup' -Status 'skip' -Detail 'Cleanup skipped: process never launched'
+            }
+            $cleanupRecorded = $true
+        }
     } finally {
-        # Restore every parent environment variable - runs even on Start-Process failure
+        # Restore every parent environment variable - runs even on process launch failure
         Restore-Environment -Backup $savedEnv
         Write-Host "  [EXEC] Parent environment variables restored"
     }
 
-    # Verify environment was restored
+    # Verify environment was restored (always runs, even after early exit)
     $allRestored = $true
     foreach ($entry in $savedEnv.GetEnumerator()) {
         $current = [Environment]::GetEnvironmentVariable($entry.Key, 'Process')
@@ -627,6 +792,7 @@ function Invoke-BoundedLaunchCheck {
     }
 
     # Manifest-based profile-leak check: compare before/after manifests of real profile subdirectories
+    # Always runs, even after early exit
     $manifestUnchanged = $true
     $manifestFailureDetails = @()
     foreach ($mp in $manifestPaths) {

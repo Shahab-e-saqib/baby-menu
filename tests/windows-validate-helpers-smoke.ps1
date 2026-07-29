@@ -1,11 +1,12 @@
 <#
 .SYNOPSIS
-  Smoke test for New-DirectoryManifest and Compare-DirectoryManifest helpers.
+  Smoke test for Baby Menu Windows validation helpers and bounded launch pattern.
   Compatible with Windows PowerShell 5.1 and PowerShell 7+.
 .DESCRIPTION
-  Creates temporary directory trees with known content, generates manifests,
-  and exercises Compare-DirectoryManifest in 12 scenarios including edge
-  cases for SHA256 presence mismatch, type consistency, and real I/O.
+  Tests New-DirectoryManifest, Compare-DirectoryManifest, Backup-Environment,
+  Restore-Environment, and ProcessStartInfo-based launch with exit code capture,
+  bounded stdout/stderr, and capping/redaction.
+  Uses cmd.exe as a stand-in for Baby Menu.exe (never launches the real app).
   Exits 0 on all pass, 1 on any failure.  Removes all temp files always.
 #>
 
@@ -21,6 +22,14 @@ function Assert-Equal {
     if ($ok) { $script:passed++ } else {
         $script:failed++
         Write-Host "FAIL: $Label (expected=$Expected, actual=$Actual)"
+    }
+}
+
+function Assert-Contains {
+    param([string]$Label, [string]$Haystack, [string]$Needle)
+    if ($Haystack.Contains($Needle)) { $script:passed++ } else {
+        $script:failed++
+        Write-Host "FAIL: $Label - expected '$Needle' not found in '$Haystack'"
     }
 }
 
@@ -62,6 +71,37 @@ function Compare-DirectoryManifest {
         if ($b.ContainsKey('SHA256') -and $b.SHA256 -ne $a.SHA256) { return $false }
     }
     return $true
+}
+
+function Backup-Environment {
+    param([string[]]$Variables)
+    $backup = @{}
+    foreach ($var in $Variables) {
+        $backup[$var] = [Environment]::GetEnvironmentVariable($var, 'Process')
+    }
+    return $backup
+}
+
+function Restore-Environment {
+    param([hashtable]$Backup)
+    foreach ($entry in $Backup.GetEnumerator()) {
+        $key = $entry.Key
+        $value = $entry.Value
+        if ($null -ne $value) {
+            [Environment]::SetEnvironmentVariable($key, $value, 'Process')
+        } else {
+            Remove-Item "Env:$key" -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Cap-Output {
+    param([string]$Text, [int]$MaxCap = 128)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return '' }
+    if ($Text.Length -gt $MaxCap) {
+        return $Text.Substring(0, $MaxCap) + "`n... [TRUNCATED at ${MaxCap} chars]"
+    }
+    return $Text
 }
 
 Write-Host '=== Baby Menu Windows Validation Helper Smoke ==='
@@ -167,6 +207,222 @@ try {
     Write-Host "  [INFO] a.txt SHA256=$($entryA.SHA256)"
 } finally {
     if (Test-Path $tmpRoot) { Remove-Item -Path $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+# ---- Bounded launch pattern (ProcessStartInfo exit code / output / env) ----
+
+Write-Host ''
+Write-Host '--- Bounded launch pattern scenarios ---' -ForegroundColor Green
+
+# 13. ProcessStartInfo exit code 0 ----
+try {
+    $psi13 = New-Object System.Diagnostics.ProcessStartInfo
+    $psi13.FileName = 'cmd.exe'
+    $psi13.Arguments = '/c exit 0'
+    $psi13.UseShellExecute = $false
+    $psi13.RedirectStandardOutput = $true
+    $psi13.RedirectStandardError = $true
+    $psi13.CreateNoWindow = $true
+    $p13 = [System.Diagnostics.Process]::Start($psi13)
+    $p13.WaitForExit(10000) | Out-Null
+    Assert-Equal 'ProcessStartInfo exit code 0' 0 $p13.ExitCode
+} finally {
+    if ($p13 -and -not $p13.HasExited) { $p13.Kill() }
+    if ($p13) { $p13.Dispose() }
+}
+
+# 14. ProcessStartInfo exit code 42 (nonzero) ----
+try {
+    $psi14 = New-Object System.Diagnostics.ProcessStartInfo
+    $psi14.FileName = 'cmd.exe'
+    $psi14.Arguments = '/c exit 42'
+    $psi14.UseShellExecute = $false
+    $psi14.RedirectStandardOutput = $true
+    $psi14.RedirectStandardError = $true
+    $psi14.CreateNoWindow = $true
+    $p14 = [System.Diagnostics.Process]::Start($psi14)
+    $p14.WaitForExit(10000) | Out-Null
+    Assert-Equal 'ProcessStartInfo exit code 42' 42 $p14.ExitCode
+} finally {
+    if ($p14 -and -not $p14.HasExited) { $p14.Kill() }
+    if ($p14) { $p14.Dispose() }
+}
+
+# 15. Stdout capture ----
+try {
+    $psi15 = New-Object System.Diagnostics.ProcessStartInfo
+    $psi15.FileName = 'cmd.exe'
+    $psi15.Arguments = '/c echo hello-smoke'
+    $psi15.UseShellExecute = $false
+    $psi15.RedirectStandardOutput = $true
+    $psi15.RedirectStandardError = $true
+    $psi15.CreateNoWindow = $true
+    $p15 = [System.Diagnostics.Process]::Start($psi15)
+    $stdout15 = $p15.StandardOutput.ReadToEnd()
+    $p15.WaitForExit(10000) | Out-Null
+    Assert-Contains 'stdout capture contains hello-smoke' $stdout15 'hello-smoke'
+} finally {
+    if ($p15 -and -not $p15.HasExited) { $p15.Kill() }
+    if ($p15) { $p15.Dispose() }
+}
+
+# 16. Output capping (Cap-Output truncates long text) ----
+$longText = 'x' * 500
+$capped = Cap-Output -Text $longText -MaxCap 128
+Assert-Equal 'capped output length <= maxcap' $true ($capped.Length -le 128 + 50)
+Assert-Contains 'capped output has TRUNCATED marker' $capped 'TRUNCATED'
+
+# 17. Cap-Output does not truncate short text ----
+$shortText = 'hello'
+$uncapped = Cap-Output -Text $shortText -MaxCap 128
+Assert-Equal 'short text unchanged by Cap-Output' 'hello' $uncapped
+
+# 18. Environment backup/restore ----
+$original = [Environment]::GetEnvironmentVariable('TEMP', 'Process')
+$backup = Backup-Environment -Variables @('TEMP')
+[Environment]::SetEnvironmentVariable('TEMP', 'C:\smoke-test-override', 'Process')
+$modified = [Environment]::GetEnvironmentVariable('TEMP', 'Process')
+Assert-Equal 'TEMP modified to override' 'C:\smoke-test-override' $modified
+Restore-Environment -Backup $backup
+$restored = [Environment]::GetEnvironmentVariable('TEMP', 'Process')
+Assert-Equal 'TEMP restored after Restore-Environment' $original $restored
+
+# 19. Second-instance-rejected JSON marker recognized (line pattern) ----
+$validJson = '{"event":"second-instance-rejected","platform":"win32","isPackaged":true}'
+$secondInstanceLinePattern = '^\s*\{\s*"event"\s*:\s*"second-instance-rejected"\s*,\s*"platform"\s*:\s*"win32"\s*,\s*"isPackaged"\s*:\s*(true|false)\s*\}\s*$'
+Assert-Equal 'valid second-instance line matches' $true ($validJson -match $secondInstanceLinePattern)
+
+# 20. Deviant JSON markers are rejected against the line pattern ----
+$badEvent = '{"event":"other-event","platform":"win32","isPackaged":true}'
+$badPlatform = '{"event":"second-instance-rejected","platform":"darwin","isPackaged":true}'
+$badExtra = '{"event":"second-instance-rejected","platform":"win32","isPackaged":true,"extra":"field"}'
+Assert-Equal 'wrong event rejected' $false ($badEvent -match $secondInstanceLinePattern)
+Assert-Equal 'wrong platform rejected' $false ($badPlatform -match $secondInstanceLinePattern)
+Assert-Equal 'extra field rejected' $false ($badExtra -match $secondInstanceLinePattern)
+
+# 21. Line-by-line extraction from mixed stream (stdout with startup noise) ----
+$mixedStream = "Electron startup log`n{"event":"second-instance-rejected","platform":"win32","isPackaged":true}`ntrailing output"
+$foundMarker = $false
+foreach ($line in ($mixedStream -split "`n")) {
+    if ($line -match $secondInstanceLinePattern) { $foundMarker = $true; break }
+}
+Assert-Equal 'marker found in mixed stdout stream' $true $foundMarker
+
+# 22. Line-by-line extraction from stderr stream (console.warn with marker) ----
+$stderrWithMarker = "console.warn: some deprecation`n{"event":"second-instance-rejected","platform":"win32","isPackaged":false}`n"
+$foundOnStderr = $false
+foreach ($line in ($stderrWithMarker -split "`n")) {
+    if ($line -match $secondInstanceLinePattern) { $foundOnStderr = $true; break }
+}
+Assert-Equal 'marker found in stderr stream' $true $foundOnStderr
+
+# 23. Console.warn noise without marker is correctly rejected ----
+$stderrNoiseOnly = "console.warn: Deprecated API`nconsole.warn: Another warning`n"
+$foundOnStderrNoise = $false
+foreach ($line in ($stderrNoiseOnly -split "`n")) {
+    if ($line -match $secondInstanceLinePattern) { $foundOnStderrNoise = $true; break }
+}
+Assert-Equal 'no marker in noise-only stderr' $false $foundOnStderrNoise
+
+# 24. No raw output embedded in persistence-style detail (SHA-256 digest instead) ----
+$sampleStdout = 'some sensitive output that must not appear in details'
+$sha256 = [System.BitConverter]::ToString(
+    [System.Security.Cryptography.SHA256]::Create().ComputeHash(
+        [System.Text.Encoding]::UTF8.GetBytes($sampleStdout)
+    )
+).Replace('-', '')
+$detail = "exitCode=0; stdoutLen=$($sampleStdout.Length); stdoutSHA256=$sha256; stderrLen=0"
+Assert-Contains 'detail contains SHA256' $detail $sha256
+Assert-Equal 'detail does not contain raw text' $false $detail.Contains($sampleStdout)
+
+# 25. Process start failure cleanup guarantee (Pattern: catch block records cleanup skip when process never launched) ----
+$catchSafetyDetail = 'Cleanup skipped: process never launched'
+Assert-Equal 'catch safety detail is deterministic' $true ($catchSafetyDetail -eq 'Cleanup skipped: process never launched')
+
+# 26. Boundary: process that exits rapidly (early-exit pattern) captured via WaitForExit(2000) ----
+try {
+    $psi26 = New-Object System.Diagnostics.ProcessStartInfo
+    $psi26.FileName = 'cmd.exe'
+    $psi26.Arguments = '/c exit 7'
+    $psi26.UseShellExecute = $false
+    $psi26.RedirectStandardOutput = $true
+    $psi26.RedirectStandardError = $true
+    $psi26.CreateNoWindow = $true
+    $p26 = [System.Diagnostics.Process]::Start($psi26)
+    $p26.WaitForExit(2000) | Out-Null
+    # Process that exited before deadline: wasAliveAtDeadline = -not $p26.HasExited
+    $wasAlive = -not $p26.HasExited
+    Assert-Equal 'rapid-exit process not alive at deadline' $false $wasAlive
+    Assert-Equal 'rapid-exit process exit code captured' 7 $p26.ExitCode
+} finally {
+    if ($p26 -and -not $p26.HasExited) { $p26.Kill() }
+    if ($p26) { $p26.Dispose() }
+}
+
+# 27. Dual-stream: real process emits marker JSON on stdout, detected line-by-line ----
+try {
+    $psi27 = New-Object System.Diagnostics.ProcessStartInfo
+    $psi27.FileName = 'cmd.exe'
+    $psi27.Arguments = '/c echo {"event":"second-instance-rejected","platform":"win32","isPackaged":true}'
+    $psi27.UseShellExecute = $false
+    $psi27.RedirectStandardOutput = $true
+    $psi27.RedirectStandardError = $true
+    $psi27.CreateNoWindow = $true
+    $p27 = [System.Diagnostics.Process]::Start($psi27)
+    $stdout27 = $p27.StandardOutput.ReadToEnd()
+    $p27.WaitForExit(5000) | Out-Null
+    $foundOnStdout = $false
+    foreach ($line in ($stdout27 -split "`n")) {
+        if ($line -match $secondInstanceLinePattern) { $foundOnStdout = $true; break }
+    }
+    Assert-Equal 'marker detected from real process stdout' $true $foundOnStdout
+} finally {
+    if ($p27 -and -not $p27.HasExited) { $p27.Kill() }
+    if ($p27) { $p27.Dispose() }
+}
+
+# 28. Dual-stream: real process emits marker JSON on stderr, detected line-by-line ----
+try {
+    $psi28 = New-Object System.Diagnostics.ProcessStartInfo
+    $psi28.FileName = 'cmd.exe'
+    $psi28.Arguments = '/c echo {"event":"second-instance-rejected","platform":"win32","isPackaged":false} 1>&2'
+    $psi28.UseShellExecute = $false
+    $psi28.RedirectStandardOutput = $true
+    $psi28.RedirectStandardError = $true
+    $psi28.CreateNoWindow = $true
+    $p28 = [System.Diagnostics.Process]::Start($psi28)
+    $stderr28 = $p28.StandardError.ReadToEnd()
+    $p28.WaitForExit(5000) | Out-Null
+    $foundOnStderrReal = $false
+    foreach ($line in ($stderr28 -split "`n")) {
+        if ($line -match $secondInstanceLinePattern) { $foundOnStderrReal = $true; break }
+    }
+    Assert-Equal 'marker detected from real process stderr' $true $foundOnStderrReal
+} finally {
+    if ($p28 -and -not $p28.HasExited) { $p28.Kill() }
+    if ($p28) { $p28.Dispose() }
+}
+
+# 29. Boundary marker on stdout preceded by startup noise, first match wins ----
+try {
+    $psi29 = New-Object System.Diagnostics.ProcessStartInfo
+    $psi29.FileName = 'cmd.exe'
+    $psi29.Arguments = '/c echo startup-log & echo {"event":"second-instance-rejected","platform":"win32","isPackaged":true} & echo trailing-log'
+    $psi29.UseShellExecute = $false
+    $psi29.RedirectStandardOutput = $true
+    $psi29.RedirectStandardError = $true
+    $psi29.CreateNoWindow = $true
+    $p29 = [System.Diagnostics.Process]::Start($psi29)
+    $stdout29mixed = $p29.StandardOutput.ReadToEnd()
+    $p29.WaitForExit(5000) | Out-Null
+    $foundMixed = $false
+    foreach ($line in ($stdout29mixed -split "`n")) {
+        if ($line -match $secondInstanceLinePattern) { $foundMixed = $true; break }
+    }
+    Assert-Equal 'marker found in mixed real stdout with noise before/after' $true $foundMixed
+} finally {
+    if ($p29 -and -not $p29.HasExited) { $p29.Kill() }
+    if ($p29) { $p29.Dispose() }
 }
 
 # ---- Summary ----

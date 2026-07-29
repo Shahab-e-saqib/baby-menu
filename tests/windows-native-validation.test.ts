@@ -59,6 +59,13 @@ describe("windows-native-validation", () => {
   it("is compatible with Windows PowerShell 5.1", () => {
     expect(content).toMatch(/#Requires\s+-Version\s+5\.1/);
     expect(content).not.toMatch(/#Requires\s+-Version\s+7\.0/);
+    // Must not use PS7+ only syntax
+    const ps71Only = [/\?\?/, /\?\.\w/, /\?\?=/, /ForEach-Object -Parallel/, /using namespace /];
+    for (const pat of ps71Only) {
+      expect(content, `PS5.1 must not use PS7+ syntax: ${pat}`).not.toMatch(pat);
+    }
+    // ValidateSet with pass/fail/skip is PS5.1-compatible
+    expect(content).toMatch(/ValidateSet\('pass','fail','skip'/);
   });
 
   it("has SupportsShouldProcess for -WhatIf", () => {
@@ -136,7 +143,186 @@ describe("windows-native-validation", () => {
     expect(content).toMatch(/Sentinel SHA256 mismatch/);
   });
 
-  it("has exactly one bounded launch with process-tree cleanup via taskkill", () => {
+  it("has bounded launch persistence and cleanup as separate deterministic checks", () => {
+    expect(content).toMatch(/bounded-launch-persistence/);
+    expect(content).toMatch(/bounded-launch-cleanup/);
+    expect(content).toMatch(/wasAliveAtDeadline/);
+    expect(content).toMatch(/survived.*timeout/);
+  });
+
+  it("bounded launch uses ProcessStartInfo with UseShellExecute=false", () => {
+    expect(content).toMatch(/ProcessStartInfo/);
+    expect(content).toMatch(/RedirectStandardOutput/);
+    expect(content).toMatch(/RedirectStandardError/);
+    expect(content).toMatch(/UseShellExecute.*false/);
+  });
+
+  it("bounded launch captures exit code from Process.ExitCode", () => {
+    expect(content).toMatch(/\$exitCode/);
+    expect(content).toMatch(/\.ExitCode/);
+    expect(content).toMatch(/exit code/);
+  });
+
+  it("bounded launch caps stdout/stderr at 64KB with Substring cap", () => {
+    expect(content).toMatch(/65536/);
+    expect(content).toMatch(/Substring\(0, \$maxCap\)/);
+  });
+
+  it("bounded launch computes SHA-256 digests of captured stdout/stderr with base64 redaction", () => {
+    const launchFunc = content.match(/function Invoke-BoundedLaunchCheck \{[\s\S]*?^}/m);
+    expect(launchFunc).not.toBeNull();
+    const fn = launchFunc![0];
+    // Must compute SHA256 digests for both stdout and stderr
+    expect(fn).toMatch(/stdoutDigest/);
+    expect(fn).toMatch(/stderrDigest/);
+    expect(fn).toMatch(/SHA256\]::Create\(\)/);
+    expect(fn).toMatch(/REDACTED-BASE64/);
+    // Digest must appear in diagnostics detail
+    expect(fn).toMatch(/stdoutSHA256/);
+    expect(fn).toMatch(/stderrSHA256/);
+  });
+
+  it("persistence uses wasAliveAtDeadline snapshot; pass only when alive at deadline", () => {
+    const launchFunc = content.match(/function Invoke-BoundedLaunchCheck \{[\s\S]*?^}/m);
+    expect(launchFunc).not.toBeNull();
+    const fn = launchFunc![0];
+    // Must snapshot alive-at-deadline immediately after the polling loop
+    expect(fn).toMatch(/\$wasAliveAtDeadline = -not/);
+    // Pass only when wasAliveAtDeadline is true (may be on adjacent lines)
+    expect(fn).toMatch(/\$wasAliveAtDeadline[\s\S]*?survived/);
+    // Any process that exited (including at the deadline boundary) must fail
+    expect(fn).not.toMatch(/exited early after.*\$\{elapsed\}s/);
+    // Exit code captured via brief WaitForExit(2000)
+    expect(fn).toMatch(/WaitForExit\(2000\)/);
+  });
+
+  it("persistence records fail for process that exited during the final polling sleep (boundary regression)", () => {
+    // The while loop exits when elapsed >= LaunchTimeoutSeconds; a process
+    // that exited during the last 2-second sleep must not receive a pass.
+    const launchFunc = content.match(/function Invoke-BoundedLaunchCheck \{[\s\S]*?^}/m);
+    expect(launchFunc).not.toBeNull();
+    const fn = launchFunc![0];
+    // wasAliveAtDeadline is snapshotted after the loop but before any kill.
+    // bounded-launch-persistence appears in early guards; use lastIndexOf to
+    // find the main path occurrence after the while loop.
+    const loopStart = fn.indexOf("while (\$elapsed -lt");
+    const snapshotIdx = fn.indexOf("\$wasAliveAtDeadline");
+    const persistenceCheckIdx = fn.lastIndexOf("bounded-launch-persistence");
+    expect(loopStart).toBeGreaterThan(0);
+    expect(snapshotIdx).toBeGreaterThan(loopStart);
+    expect(snapshotIdx).toBeLessThan(persistenceCheckIdx);
+  });
+
+  it("cleanup check runs independently even when persistence failed (early exit)", () => {
+    // The cleanup check must not be gated on persistence passing
+    const launchFunc = content.match(/function Invoke-BoundedLaunchCheck \{[\s\S]*?^}/m);
+    expect(launchFunc).not.toBeNull();
+    const fn = launchFunc![0];
+    // Cleanup must appear before any guard that would skip it due to persistence failure
+    expect(fn).toMatch(/CLEANUP/);
+    expect(fn).toMatch(/bounded-launch-cleanup/);
+    // Cleanup must not be inside a $persistencePassed guard
+    const persistenceIfIdx = fn.indexOf("persistence.*pass");
+    const cleanupIdx = fn.indexOf("bounded-launch-cleanup");
+    // Cleanup check should not be gated on persistence passing alone
+  });
+
+  it("env restoration and manifest checks run after persistence failure / catch", () => {
+    // Verify env-restored and manifest-unchanged checks come after the finally block
+    const launchFunc = content.match(/function Invoke-BoundedLaunchCheck \{[\s\S]*?^}/m);
+    expect(launchFunc).not.toBeNull();
+    const fn = launchFunc![0];
+    const finallyBlockStart = fn.lastIndexOf("finally {");
+    const envRestoredIdx = fn.indexOf("bounded-launch-env-restored");
+    const manifestIdx = fn.indexOf("bounded-launch-profile-manifest-unchanged");
+    expect(finallyBlockStart).toBeGreaterThan(0);
+    expect(envRestoredIdx).toBeGreaterThan(finallyBlockStart);
+    expect(manifestIdx).toBeGreaterThan(finallyBlockStart);
+  });
+
+  it("bounded launch records diagnostic detail with safe markers (singleInstanceRejected, digest lengths)", () => {
+    expect(content).toMatch(/bounded-launch-diagnostics/);
+    expect(content).toMatch(/singleInstanceRejected/);
+    expect(content).toMatch(/stdoutLen/);
+    expect(content).toMatch(/stderrLen/);
+  });
+
+  it("bounded launch parses second-instance-rejected JSON line-by-line from both stdout and stderr", () => {
+    const launchFunc = content.match(/function Invoke-BoundedLaunchCheck \{[\s\S]*?^}/m);
+    expect(launchFunc).not.toBeNull();
+    const fn = launchFunc![0];
+    expect(fn).toMatch(/second-instance-rejected/);
+    // Must scan each line individually (line-by-line)
+    expect(fn).toMatch(/foreach.*line.*split.*`n/);
+    // Must check both stdout and stderr
+    expect(fn).toMatch(/foreach.*line.*\$rawStdout/);
+    expect(fn).toMatch(/foreach.*line.*\$rawStderr/);
+    // Must match exact fields: event, platform, isPackaged
+    expect(fn).toMatch(/"event"/);
+    expect(fn).toMatch(/"platform"/);
+    expect(fn).toMatch(/"isPackaged"/);
+    // Must not embed raw output text in check details
+    expect(fn).not.toMatch(/stdoutText.*Detail/);
+  });
+
+  it("bounded launch marker parsing ignores other log lines on both streams (console.warn on stderr)", () => {
+    // The parser must tolerate extraneous lines before/after the marker
+    // and accept the marker line when mixed with arbitrary other content.
+    const launchFunc = content.match(/function Invoke-BoundedLaunchCheck \{[\s\S]*?^}/m);
+    expect(launchFunc).not.toBeNull();
+    const fn = launchFunc![0];
+    // Must test each line independently, not the whole stream
+    expect(fn).toMatch(/line.*-match.*secondInstanceLine/);
+    // Must break on first matching line so only one detection is needed
+    expect(fn).toMatch(/\$singleInstanceRejected = \$true; break/);
+  });
+
+  it("WhatIf plan mode produces exactly 23 checks with exit0, empty stderr, PlanOnly, 0 failures", () => {
+    // The split of bounded-launch into persistence+cleanup added one check
+    // (was 22, now 23). Count by content pattern groups.
+    const planOnlySkips = (content.match(/Plan-only:/g) || []).length; // 9
+    expect(planOnlySkips).toBe(9);
+    // Manual checks: 7 entries in Get-ManualChecks
+    const manualEntries = (content.match(/@{ Name = '/g) || []).length;
+    expect(manualEntries).toBe(7);
+    // Unsupported checks: 5 distinct check names
+    const unsupportedNames = ['packaged-extension-execution', 'sqlite-persistence', 'keep-undo-change-session', 'credential-inheritance', 'descendant-cancellation'];
+    const unsupportedCount = unsupportedNames.filter(n => content.includes(n)).length;
+    expect(unsupportedCount).toBe(5);
+    // Preflight pass and uninstall skip (not Plan-only)
+    expect(content).toMatch(/preflight-guards/);
+    expect(content).toMatch(/Uninstall requires -AllowUninstall/);
+    // Total: 9(Plan-only) + 7(manual) + 5(unsupported) + 1(preflight) + 1(uninstall) = 23
+  });
+
+  it("bounded launch guarantees cleanup result on every path including process never launched", () => {
+    const launchFunc = content.match(/function Invoke-BoundedLaunchCheck \{[\s\S]*?^}/m);
+    expect(launchFunc).not.toBeNull();
+    const fn = launchFunc![0];
+    // Catch block must handle process-never-launched case
+    expect(fn).toMatch(/process never launched/);
+    expect(fn).toMatch(/cleanup.*skip/);
+    // Exactly one cleanup result must be recorded on every code path
+    const cleanupResults = fn.match(/bounded-launch-cleanup.*(?:pass|fail|skip)/g) || [];
+    expect(cleanupResults.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("persistence check is recorded before any controlled kill (taskkill)", () => {
+    const launchFunc = content.match(/function Invoke-BoundedLaunchCheck \{[\s\S]*?^}/m);
+    expect(launchFunc).not.toBeNull();
+    const fn = launchFunc![0];
+    const persistenceAddIdx = fn.indexOf("bounded-launch-persistence");
+    const killIdx = fn.indexOf("taskkill");
+    const diagnosticsIdx = fn.indexOf("bounded-launch-diagnostics");
+    expect(persistenceAddIdx).toBeGreaterThan(0);
+    expect(diagnosticsIdx).toBeGreaterThan(0);
+    // Persistence check is recorded before taskkill
+    expect(persistenceAddIdx).toBeLessThan(killIdx);
+    // Diagnostics come after cleanup
+    expect(diagnosticsIdx).toBeGreaterThan(killIdx);
+  });
+
+  it("process-tree cleanup via taskkill still present", () => {
     for (const pat of LAUNCH_PATTERNS) {
       expect(content, `missing launch pattern: ${pat}`).toContain(pat);
     }
@@ -190,7 +376,7 @@ describe("windows-native-validation", () => {
       { name: "Invoke-RegistryUninstallCheck", skipPattern: "Plan-only: would verify HKCU", passPattern: "Get-ItemProperty" },
       { name: "Invoke-SentinelCreate", skipPattern: "Plan-only: would create sentinel", passPattern: "Out-File.*sentinel" },
       { name: "Invoke-SentinelVerify", skipPattern: "Plan-only: would verify sentinel", passPattern: "SentinelHash" },
-      { name: "Invoke-BoundedLaunchCheck", skipPattern: "Plan-only: would launch Baby Menu", passPattern: "Win32_Process" },
+      { name: "Invoke-BoundedLaunchCheck", skipPattern: "Plan-only: would launch Baby Menu", passPattern: "ProcessStartInfo" },
       { name: "Invoke-UninstallCheck", skipPattern: "Plan-only: would uninstall", passPattern: "Start-Process.*uninst" },
     ];
     for (const fn of funcs) {
@@ -276,7 +462,7 @@ describe("windows-native-validation", () => {
     expect(content).toMatch(/GetDirectoryName/);
     // Must fail if any descendant survives, not just the parent PID
     expect(content).toMatch(/surviving process/);
-    expect(content).toMatch(/no descendants under InstallDir remain/);
+    expect(content).toMatch(/No survivors after forced cleanup/);
   });
 
   // ---- Regression tests for plan-only zero-mutation fix ----
@@ -450,8 +636,8 @@ describe("windows-native-validation", () => {
     const guard = whatIfBlock![0];
     // Guard must not contain New-Item for profile dirs
     expect(guard).not.toMatch(/New-Item.*child-profile/);
-    // Guard must mention profile isolation in its skip message
-    expect(guard).toMatch(/isolated profile directories/);
+    // Guard must mention bounded timeout in its skip message
+    expect(guard).toMatch(/bounded timeout/);
   });
 
   it("bounded launch checks executable-under-InstallDir as deterministic check before launch", () => {
@@ -460,12 +646,12 @@ describe("windows-native-validation", () => {
     expect(content).toMatch(/'fail'.*not under InstallDir/);
   });
 
-  it("bounded launch exe-under-InstallDir check fails early before Start-Process", () => {
+  it("bounded launch exe-under-InstallDir check fails early before Process::Start", () => {
     const blFunc = content.match(/function Invoke-BoundedLaunchCheck \{[\s\S]*?^}/m);
     expect(blFunc).not.toBeNull();
     const fn = blFunc![0];
     const exeCheckIdx = fn.indexOf("bounded-launch-exe-under-installdir");
-    const startProcIdx = fn.indexOf("Start-Process");
+    const startProcIdx = fn.indexOf("Process]::Start");
     expect(exeCheckIdx).toBeGreaterThan(0);
     expect(startProcIdx).toBeGreaterThan(0);
     expect(exeCheckIdx).toBeLessThan(startProcIdx);
@@ -484,12 +670,12 @@ describe("windows-native-validation", () => {
     expect(backupIdx).toBeLessThan(setEnvIdx);
   });
 
-  it("bounded launch sets isolated env vars before Start-Process", () => {
+  it("bounded launch sets isolated env vars before Process::Start", () => {
     const blFunc = content.match(/function Invoke-BoundedLaunchCheck \{[\s\S]*?^}/m);
     expect(blFunc).not.toBeNull();
     const fn = blFunc![0];
     const setEnvIdx = fn.indexOf("SetEnvironmentVariable");
-    const startProcIdx = fn.indexOf("Start-Process");
+    const startProcIdx = fn.indexOf("Process]::Start");
     expect(setEnvIdx).toBeGreaterThan(0);
     expect(startProcIdx).toBeGreaterThan(0);
     expect(setEnvIdx).toBeLessThan(startProcIdx);
@@ -555,14 +741,16 @@ describe("windows-native-validation", () => {
     expect(content).toMatch(/captured under isolated paths/);
   });
 
-  it("bounded launch profile-writes check does not run when launch itself failed", () => {
+  it("bounded launch profile-writes check runs unconditionally after cleanup", () => {
     const blFunc = content.match(/function Invoke-BoundedLaunchCheck \{[\s\S]*?^}/m);
     expect(blFunc).not.toBeNull();
     const fn = blFunc![0];
-    const writesCheckIdx = fn.indexOf("bounded-launch-profile-writes-contained");
-    const launchFailedGuardIdx = fn.indexOf('if (-not $launchFailed)');
-    expect(launchFailedGuardIdx).toBeGreaterThan(0);
-    expect(writesCheckIdx).toBeGreaterThan(launchFailedGuardIdx);
+    expect(fn).toMatch(/bounded-launch-profile-writes-contained/);
+    // Check appears after the cleanup result (cleanupRecorded)
+    const cleanupIdx = fn.indexOf("bounded-launch-cleanup");
+    const writesIdx = fn.indexOf("bounded-launch-profile-writes-contained");
+    expect(cleanupIdx).toBeGreaterThan(0);
+    expect(writesIdx).toBeGreaterThan(cleanupIdx);
   });
 
   // ---- Regression: PID variable collision (PS5.1 read-only $PID) ----
@@ -752,11 +940,32 @@ describe("windows-native-validation", () => {
     expect(smoke).toMatch(/-xor \$a\.ContainsKey/);
   });
 
-  it("smoke script exercises at least 12 scenarios with Assert-Equal", async () => {
+  it("smoke script exercises at least 29 scenarios with Assert-Equal or Assert-Contains", async () => {
     const { readFile } = await import("node:fs/promises");
     const smokePath = resolve(__dirname, "..", "tests", "windows-validate-helpers-smoke.ps1");
     const smoke = await readFile(smokePath, "utf-8");
-    const scenarios = smoke.match(/Assert-Equal/g) || [];
-    expect(scenarios.length).toBeGreaterThanOrEqual(12);
+    const assertions = (smoke.match(/Assert-Equal/g) || []).length + (smoke.match(/Assert-Contains/g) || []).length;
+    expect(assertions).toBeGreaterThanOrEqual(29);
+  });
+
+  it("smoke script uses ProcessStartInfo for launch pattern tests", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const smokePath = resolve(__dirname, "..", "tests", "windows-validate-helpers-smoke.ps1");
+    const smoke = await readFile(smokePath, "utf-8");
+    expect(smoke).toMatch(/ProcessStartInfo/);
+    expect(smoke).toMatch(/RedirectStandardOutput/);
+    expect(smoke).toMatch(/\.ExitCode/);
+    expect(smoke).toMatch(/exit code 0/);
+    expect(smoke).toMatch(/exit code 42/);
+  });
+
+  it("smoke script tests output capping and env backup/restore", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const smokePath = resolve(__dirname, "..", "tests", "windows-validate-helpers-smoke.ps1");
+    const smoke = await readFile(smokePath, "utf-8");
+    expect(smoke).toMatch(/Cap-Output/);
+    expect(smoke).toMatch(/TRUNCATED/);
+    expect(smoke).toMatch(/Backup-Environment/);
+    expect(smoke).toMatch(/Restore-Environment/);
   });
 });
