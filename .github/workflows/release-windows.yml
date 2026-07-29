@@ -1,0 +1,177 @@
+name: Release Windows
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    permissions:
+      contents: read
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    env:
+      TAG_NAME: ${{ github.ref_name }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.1.1
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        env:
+          BABY_MENU_UMAMI_HOST: https://a.kunchenguid.com
+          BABY_MENU_UMAMI_WEBSITE_ID: ${{ vars.BABY_MENU_UMAMI_WEBSITE_ID }}
+        run: pnpm build
+
+      - name: Guard against unsigned public GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $cscLink = "${{ secrets.WIN_CSC_LINK }}"
+          $cscPwd = "${{ secrets.WIN_CSC_KEY_PASSWORD }}"
+          if ([string]::IsNullOrEmpty($cscLink) -or [string]::IsNullOrEmpty($cscPwd)) {
+            Write-Error "::error::Public GitHub Release requires Authenticode signing certificates. Set WIN_CSC_LINK and WIN_CSC_KEY_PASSWORD secrets."
+            exit 1
+          }
+
+      - name: Build NSIS installer
+        shell: pwsh
+        run: npx electron-builder --win --x64
+        env:
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+
+      - name: Resolve installer for deterministic artifact matching
+        id: installer
+        shell: pwsh
+        run: |
+          $matches = Get-ChildItem -Path "release" -Filter "Baby-Menu-*.exe"
+          if ($matches.Count -eq 0) {
+            Write-Error "::error::No NSIS installer found in release/ directory"
+            exit 1
+          }
+          if ($matches.Count -gt 1) {
+            Write-Error "::error::Multiple installers found in release/: $($matches.Name -join ', ')"
+            exit 1
+          }
+          echo "path=$($matches[0].FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          echo "name=$($matches[0].Name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Verify Authenticode signature (release build)
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature -FilePath "${{ steps.installer.outputs.path }}"
+          if ($sig.Status -ne "Valid") {
+            Write-Error "::error::Authenticode signature verification FAILED: $($sig.StatusMessage)"
+            exit 1
+          }
+          Write-Host "Authenticode signature verified successfully"
+
+      - name: Rename signed installer (remove -unsigned suffix)
+        if: startsWith(github.ref, 'refs/tags/')
+        id: rename
+        shell: pwsh
+        run: |
+          $oldName = "${{ steps.installer.outputs.name }}"
+          $newName = $oldName -replace '-unsigned', ''
+          Rename-Item -Path "${{ steps.installer.outputs.path }}" -NewName $newName
+          echo "name=$newName" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "Renamed $oldName -> $newName"
+
+      - name: Compute SHA-256 checksum
+        id: checksum
+        shell: pwsh
+        run: |
+          $installerName = "${{ steps.rename.outputs.name || steps.installer.outputs.name }}"
+          $hash = (Get-FileHash -Path "release/$installerName" -Algorithm SHA256).Hash.ToLower()
+          $checksumFile = "$installerName.sha256"
+          Set-Content -Path "release/$checksumFile" -Value "$hash  $installerName"
+          Write-Host "SHA-256 checksum: $hash"
+          echo "hash=$hash" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Upload installer as build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: baby-menu-win-x64-installer
+          path: |
+            release/*.exe
+            release/*.sha256
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/') && 1 || 7 }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: baby-menu-win-x64-installer
+          path: release
+
+      - name: Create or verify GitHub Release exists
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $ErrorActionPreference = 'Continue'
+          gh release view "$tag" --json tagName >$null 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Release $tag does not exist. Creating draft..."
+            gh release create "$tag" --title "$tag" --generate-notes --draft
+            echo "created_as_draft=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          } else {
+            Write-Host "Release $tag already exists."
+            echo "created_as_draft=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+
+      - name: Upload assets to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          gh release upload "$tag" "release/*.exe" "release/*.sha256" --clobber
+
+      - name: Publish draft release
+        if: steps.release.outputs.created_as_draft == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          gh release edit "$tag" --draft=false
+          Write-Host "Draft release $tag published."
