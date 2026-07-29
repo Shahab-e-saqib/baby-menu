@@ -856,6 +856,72 @@ function Invoke-UninstallCheck {
     }
 }
 
+# ---- Post-install process detection ----
+
+$script:ProceedWithLaunch = $true
+
+function Invoke-PostInstallProcessCheck {
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param()
+    $name = 'post-install-no-running-app'
+    if ($WhatIfPreference) {
+        Add-CheckResult -Name $name -Status 'skip' -Detail 'Plan-only: would check for running app processes under InstallDir'
+        return
+    }
+    Write-Host '  [EXEC] Checking for app processes running from InstallDir'
+
+    $installDirCanon = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
+    try {
+        $allProcs = Get-CimInstance -ClassName Win32_Process -ErrorAction Stop
+    } catch {
+        Write-Host "  [EXEC] Cannot enumerate processes (Win32_Process query failed)"
+        Add-CheckResult -Name $name -Status 'fail' -Detail 'Cannot enumerate processes: Win32_Process query failed'
+        $script:ProceedWithLaunch = $false
+        return
+    }
+    $found = @()
+    foreach ($p in $allProcs) {
+        if ($p.ExecutablePath) {
+            $pexDir = [System.IO.Path]::GetDirectoryName($p.ExecutablePath).TrimEnd('\')
+            if ($pexDir -eq $installDirCanon -or $pexDir.StartsWith("$installDirCanon\", [StringComparison]::OrdinalIgnoreCase)) {
+                $found += $p
+            }
+        }
+    }
+    if ($found.Count -eq 0) {
+        Add-CheckResult -Name $name -Status 'pass' -Detail 'No app processes running from InstallDir'
+        return
+    }
+    $pids = ($found | ForEach-Object { $_.ProcessId }) -join ', '
+    Add-CheckResult -Name $name -Status 'fail' -Detail "$($found.Count) app process(es) running from InstallDir after install (PID(s): $pids)"
+    foreach ($p in $found) {
+        & taskkill /T /F /PID $p.ProcessId 2>&1 | Out-Null
+    }
+    Start-Sleep -Seconds 1
+    try {
+        $remaining = Get-CimInstance -ClassName Win32_Process -ErrorAction Stop
+    } catch {
+        Write-Host "  [EXEC] Cannot re-enumerate processes after kill"
+        $script:ProceedWithLaunch = $false
+        return
+    }
+    $survivors = @()
+    foreach ($p in $remaining) {
+        if ($p.ExecutablePath) {
+            $pexDir = [System.IO.Path]::GetDirectoryName($p.ExecutablePath).TrimEnd('\')
+            if ($pexDir -eq $installDirCanon -or $pexDir.StartsWith("$installDirCanon\", [StringComparison]::OrdinalIgnoreCase)) {
+                $survivors += $p
+            }
+        }
+    }
+    if ($survivors.Count -eq 0) {
+        Write-Host "  [EXEC] Killed $($found.Count) process(es) under InstallDir; no survivors"
+    } else {
+        Write-Host "  [WARN] $($survivors.Count) survivor(s) remain after kill"
+    }
+    $script:ProceedWithLaunch = $false
+}
+
 function Invoke-UnsupportedCheck {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param()
@@ -961,28 +1027,43 @@ if ($AllowInstall -or $WhatIfPreference) {
     Add-CheckResult -Name 'sentinel-verify-install' -Status 'skip' -Detail 'Skipped: -AllowInstall not specified'
 }
 
-# Phase 4: Installed files
-Write-Host '--- Phase 4: Installed files ---' -ForegroundColor Green
+# Phase 4: Post-install process check
+Write-Host '--- Phase 4: Post-install process check ---' -ForegroundColor Green
+Invoke-PostInstallProcessCheck
+
+# Phase 5: Installed files
+Write-Host '--- Phase 5: Installed files ---' -ForegroundColor Green
 Invoke-InstalledFilesCheck
 
-# Phase 5: Shortcuts
-Write-Host '--- Phase 5: Shortcuts ---' -ForegroundColor Green
+# Phase 6: Shortcuts
+Write-Host '--- Phase 6: Shortcuts ---' -ForegroundColor Green
 Invoke-ShortcutCheck
 
-# Phase 6: Registry uninstall entry
-Write-Host '--- Phase 6: Registry uninstall entry ---' -ForegroundColor Green
+# Phase 7: Registry uninstall entry
+Write-Host '--- Phase 7: Registry uninstall entry ---' -ForegroundColor Green
 Invoke-RegistryUninstallCheck
 
-# Phase 7: Unsupported runtime checks
-Write-Host '--- Phase 7: Runtime checks (not standalone-testable) ---' -ForegroundColor Yellow
+# Phase 8: Unsupported runtime checks
+Write-Host '--- Phase 8: Runtime checks (not standalone-testable) ---' -ForegroundColor Yellow
 Invoke-UnsupportedCheck
 
-# Phase 8: Bounded launch
-Write-Host '--- Phase 8: Bounded launch ---' -ForegroundColor Green
-Invoke-BoundedLaunchCheck
+# Phase 9: Bounded launch (gated by post-install process check)
+Write-Host '--- Phase 9: Bounded launch ---' -ForegroundColor Green
+if ($script:ProceedWithLaunch) {
+    Invoke-BoundedLaunchCheck
+} else {
+    Add-CheckResult -Name 'bounded-launch-persistence' -Status 'skip' -Detail 'Skipped: $ProceedWithLaunch is false (app processes found after install)' -ManualGuidance 'Stop and report retained evidence to the captain. Another launch requires captain authorization.'
+    Add-CheckResult -Name 'bounded-launch-cleanup' -Status 'skip' -Detail 'Skipped: $ProceedWithLaunch is false'
+    Add-CheckResult -Name 'bounded-launch-diagnostics' -Status 'skip' -Detail 'Skipped: $ProceedWithLaunch is false'
+    Add-CheckResult -Name 'bounded-launch-exe-under-installdir' -Status 'skip' -Detail 'Skipped: $ProceedWithLaunch is false'
+    Add-CheckResult -Name 'bounded-launch-profile-isolation' -Status 'skip' -Detail 'Skipped: $ProceedWithLaunch is false'
+    Add-CheckResult -Name 'bounded-launch-profile-writes-contained' -Status 'skip' -Detail 'Skipped: $ProceedWithLaunch is false'
+    Add-CheckResult -Name 'bounded-launch-env-restored' -Status 'skip' -Detail 'Skipped: $ProceedWithLaunch is false'
+    Add-CheckResult -Name 'bounded-launch-profile-manifest-unchanged' -Status 'skip' -Detail 'Skipped: $ProceedWithLaunch is false'
+}
 
-# Phase 9: Uninstall + sentinel verify
-Write-Host '--- Phase 9: Uninstall ---' -ForegroundColor Green
+# Phase 10: Uninstall + sentinel verify
+Write-Host '--- Phase 10: Uninstall ---' -ForegroundColor Green
 if ($AllowUninstall -or $WhatIfPreference) {
     Invoke-UninstallCheck
     Invoke-SentinelVerify -Stage 'uninstall'
@@ -991,7 +1072,7 @@ if ($AllowUninstall -or $WhatIfPreference) {
     Add-CheckResult -Name 'sentinel-verify-uninstall' -Status 'skip' -Detail 'Skipped: -AllowUninstall not specified'
 }
 
-# Phase 10: Manual checks
+# Phase 11: Manual checks
 Write-Host '--- Manual checks (not automatable) ---' -ForegroundColor Yellow
 $manualChecks = Get-ManualChecks
 foreach ($check in $manualChecks) {

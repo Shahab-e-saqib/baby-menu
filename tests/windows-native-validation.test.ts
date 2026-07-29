@@ -277,11 +277,10 @@ describe("windows-native-validation", () => {
     expect(fn).toMatch(/\$singleInstanceRejected = \$true; break/);
   });
 
-  it("WhatIf plan mode produces exactly 23 checks with exit0, empty stderr, PlanOnly, 0 failures", () => {
-    // The split of bounded-launch into persistence+cleanup added one check
-    // (was 22, now 23). Count by content pattern groups.
-    const planOnlySkips = (content.match(/Plan-only:/g) || []).length; // 9
-    expect(planOnlySkips).toBe(9);
+  it("WhatIf plan mode produces exactly 24 checks with exit0, empty stderr, PlanOnly, 0 failures", () => {
+    // post-install-no-running-app added one check (was 23, now 24).
+    const planOnlySkips = (content.match(/Plan-only:/g) || []).length; // 10
+    expect(planOnlySkips).toBe(10);
     // Manual checks: 7 entries in Get-ManualChecks
     const manualEntries = (content.match(/@{ Name = '/g) || []).length;
     expect(manualEntries).toBe(7);
@@ -292,7 +291,7 @@ describe("windows-native-validation", () => {
     // Preflight pass and uninstall skip (not Plan-only)
     expect(content).toMatch(/preflight-guards/);
     expect(content).toMatch(/Uninstall requires -AllowUninstall/);
-    // Total: 9(Plan-only) + 7(manual) + 5(unsupported) + 1(preflight) + 1(uninstall) = 23
+    // Total: 10(Plan-only) + 7(manual) + 5(unsupported) + 1(preflight) + 1(uninstall) = 24
   });
 
   it("bounded launch guarantees cleanup result on every path including process never launched", () => {
@@ -305,6 +304,176 @@ describe("windows-native-validation", () => {
     // Exactly one cleanup result must be recorded on every code path
     const cleanupResults = fn.match(/bounded-launch-cleanup.*(?:pass|fail|skip)/g) || [];
     expect(cleanupResults.length).toBeGreaterThanOrEqual(1);
+  });
+
+  // ---- Post-install process detection ----
+
+  it("defines Invoke-PostInstallProcessCheck function", () => {
+    expect(content).toMatch(/function Invoke-PostInstallProcessCheck/);
+  });
+
+  it("post-install process check uses Get-CimInstance Win32_Process with -ErrorAction Stop inside try/catch", () => {
+    const func = content.match(/function Invoke-PostInstallProcessCheck \{[\s\S]*?^}/m);
+    expect(func).not.toBeNull();
+    const fn = func![0];
+    // Must use -ErrorAction Stop (not SilentlyContinue) so inaccessible data is caught
+    expect(fn).toMatch(/Get-CimInstance.*Win32_Process.*ErrorAction Stop/);
+    // Must wrap in try/catch (use [\s\S] for multiline)
+    expect(fn).toMatch(/try\s*\{[\s\S]*?Get-CimInstance[\s\S]*?Win32_Process[\s\S]*?ErrorAction Stop/);
+    expect(fn).toMatch(/catch\s*\{[\s\S]*?Add-CheckResult[\s\S]*?\$name[\s\S]*?'fail'/);
+    expect(fn).toMatch(/catch\s*\{[\s\S]*?\$script:ProceedWithLaunch = \$false/);
+    expect(fn).toMatch(/ExecutablePath/);
+  });
+
+  it("post-install process check uses -ErrorAction Stop for re-enumeration after kill", () => {
+    const func = content.match(/function Invoke-PostInstallProcessCheck \{[\s\S]*?^}/m);
+    expect(func).not.toBeNull();
+    const fn = func![0];
+    // Second Get-CimInstance (survivor check) must also use -ErrorAction Stop
+    const catchBlocks = fn.match(/catch \{[^}]*\}/g) || [];
+    expect(catchBlocks.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("enumeration failure sets ProceedWithLaunch=false and suppresses explicit launch", () => {
+    const func = content.match(/function Invoke-PostInstallProcessCheck \{[\s\S]*?^}/m);
+    expect(func).not.toBeNull();
+    const fn = func![0];
+    // First catch block: enumeration failure -> fail + ProceedWithLaunch = false + return
+    const catch1 = fn.match(/catch \{[\s\S]*?\}/);
+    expect(catch1).not.toBeNull();
+    const c1 = catch1![0];
+    expect(c1).toMatch(/Add-CheckResult[\s\S]*?\$name[\s\S]*?'fail'/);
+    expect(c1).toMatch(/\$script:ProceedWithLaunch = \$false/);
+    expect(c1).toMatch(/return/);
+    // Must not log process names, PIDs, or other sensitive details on enumeration failure
+    expect(c1).not.toMatch(/PID/);
+    expect(c1).not.toMatch(/ExecutablePath/);
+    expect(c1).not.toMatch(/ProcessId/);
+  });
+
+  it("post-install process check uses GetDirectoryName path matching against InstallDir", () => {
+    const func = content.match(/function Invoke-PostInstallProcessCheck \{[\s\S]*?^}/m);
+    expect(func).not.toBeNull();
+    expect(func![0]).toMatch(/GetDirectoryName/);
+    // Must compare against $installDirCanon using StartsWith with OrdinalIgnoreCase
+    expect(func![0]).toMatch(/StartsWith.*installDirCanon/);
+    expect(func![0]).toMatch(/OrdinalIgnoreCase/);
+    expect(func![0]).not.toMatch(/IMAGENAME/);
+    expect(func![0]).not.toMatch(/\bname\b.*match/);
+  });
+
+  it("post-install process check uses taskkill /T /F /PID for killing (not by name)", () => {
+    const func = content.match(/function Invoke-PostInstallProcessCheck \{[\s\S]*?^}/m);
+    expect(func).not.toBeNull();
+    expect(func![0]).toMatch(/taskkill \/T \/F \/PID/);
+    // Must kill by PID, not by IMAGENAME or process name
+    expect(func![0]).not.toMatch(/taskkill.*IMAGENAME/);
+    expect(func![0]).not.toMatch(/taskkill.*\/IM\b/);
+  });
+
+  it("post-install process check sets $script:ProceedWithLaunch to false when processes found", () => {
+    const func = content.match(/function Invoke-PostInstallProcessCheck \{[\s\S]*?^}/m);
+    expect(func).not.toBeNull();
+    expect(func![0]).toMatch(/\$script:ProceedWithLaunch = \$false/);
+  });
+
+  it("post-install process check reports pass with no running app processes, fail with any found", () => {
+    const func = content.match(/function Invoke-PostInstallProcessCheck \{[\s\S]*?^}/m);
+    expect(func).not.toBeNull();
+    const fn = func![0];
+    expect(fn).toMatch(/post-install-no-running-app/);
+    expect(fn).toMatch(/'pass'.*No app processes running/);
+    expect(fn).toMatch(/'fail'.*app process.*running from InstallDir/);
+  });
+
+  it("post-install process check verifies no survivors after kill", () => {
+    const func = content.match(/function Invoke-PostInstallProcessCheck \{[\s\S]*?^}/m);
+    expect(func).not.toBeNull();
+    const fn = func![0];
+    expect(fn).toMatch(/survivor/);
+    expect(fn).toMatch(/no survivors/);
+  });
+
+  it("post-install process check WhatIf guard returns honest skip without mutation", () => {
+    const func = content.match(/function Invoke-PostInstallProcessCheck \{[\s\S]*?^}/m);
+    expect(func).not.toBeNull();
+    const fn = func![0];
+    // Must have WhatIf guard that returns early
+    expect(fn).toMatch(/\$WhatIfPreference/);
+    expect(fn).toMatch(/return/);
+    // Must not call Get-CimInstance or taskkill in the WhatIf guard path
+    const whatIfBlock = fn.match(/\$WhatIfPreference\)\s*\{[\s\S]*?return/);
+    expect(whatIfBlock).not.toBeNull();
+    expect(whatIfBlock![0]).not.toMatch(/Get-CimInstance/);
+    expect(whatIfBlock![0]).not.toMatch(/taskkill/);
+  });
+
+  it("main flow calls Invoke-PostInstallProcessCheck before Invoke-BoundedLaunchCheck", () => {
+    // Use lastIndexOf to find the invocation call sites in the main flow
+    // (function definitions appear earlier in the file and would give wrong order)
+    const postInstallIdx = content.lastIndexOf("Invoke-PostInstallProcessCheck");
+    const boundedLaunchIdx = content.lastIndexOf("Invoke-BoundedLaunchCheck");
+    expect(postInstallIdx).toBeGreaterThan(0);
+    expect(boundedLaunchIdx).toBeGreaterThan(0);
+    expect(postInstallIdx).toBeLessThan(boundedLaunchIdx);
+  });
+
+  it("bounded launch is gated by $script:ProceedWithLaunch", () => {
+    expect(content).toMatch(/\$script:ProceedWithLaunch/);
+    // Use lastIndexOf to find the gate and call in the main flow
+    const gateIdx = content.lastIndexOf("\$script:ProceedWithLaunch");
+    const boundedLaunchIdx = content.lastIndexOf("Invoke-BoundedLaunchCheck");
+    expect(gateIdx).toBeGreaterThan(0);
+    expect(boundedLaunchIdx).toBeGreaterThan(0);
+    expect(gateIdx).toBeLessThan(boundedLaunchIdx);
+    expect(content).toMatch(/if \(\$script:ProceedWithLaunch\)/);
+  });
+
+  it("all bounded-launch sub-checks are skipped when ProceedWithLaunch is false", () => {
+    const elseBlock = content.match(/else \{\s+Add-CheckResult -Name 'bounded-launch-persistence'[\s\S]*?\n\}/);
+    expect(elseBlock).not.toBeNull();
+    const block = elseBlock![0];
+    expect(block).toMatch(/bounded-launch-persistence.*skip/);
+    expect(block).toMatch(/bounded-launch-cleanup.*skip/);
+    expect(block).toMatch(/bounded-launch-diagnostics.*skip/);
+    expect(block).toMatch(/bounded-launch-exe-under-installdir.*skip/);
+    expect(block).toMatch(/bounded-launch-profile-isolation.*skip/);
+    expect(block).toMatch(/bounded-launch-profile-writes-contained.*skip/);
+    expect(block).toMatch(/bounded-launch-env-restored.*skip/);
+    expect(block).toMatch(/bounded-launch-profile-manifest-unchanged.*skip/);
+    // Must have exactly one result per check (no duplicate bounded-launch-persistence)
+    const persistenceMatches = block.match(/bounded-launch-persistence/g) || [];
+    expect(persistenceMatches.length).toBe(1);
+  });
+
+  it("post-install-no-running-app has exactly one result per relevant check", () => {
+    const matches = content.match(/post-install-no-running-app/g) || [];
+    expect(matches.length).toBe(1);
+  });
+
+  it("bounded-launch-persistence ManualGuidance does not suggest retry; says stop/report to captain", () => {
+    // Find the else-block ManualGuidance where bounded-launch-persistence is skipped
+    // with the ProceedWithLaunch is false message (not the -AllowLaunch guard)
+    const skipGuidance = content.match(/ProceedWithLaunch is false.*ManualGuidance '[^']*'/);
+    expect(skipGuidance).not.toBeNull();
+    const guidance = skipGuidance![0];
+    expect(guidance).not.toMatch(/retry/i);
+    expect(guidance).not.toMatch(/clean environment/);
+    expect(guidance).toMatch(/Stop/i);
+    expect(guidance).toMatch(/captain/);
+    expect(guidance).toMatch(/another launch.*captain authorization/i);
+  });
+
+  it("post-install process check is PS5.1 compatible (no ?? ?. ??= ForEach-Object -Parallel)", () => {
+    const func = content.match(/function Invoke-PostInstallProcessCheck \{[\s\S]*?^}/m);
+    expect(func).not.toBeNull();
+    const fn = func![0];
+    expect(fn).not.toMatch(/\?\?/);
+    expect(fn).not.toMatch(/\?\.\w/);
+    expect(fn).not.toMatch(/\?\?=/);
+    expect(fn).not.toMatch(/ForEach-Object -Parallel/);
+    // Uses ForEach-Object with scriptblock or foreach statement
+    expect(fn).toMatch(/\$found \| ForEach-Object/);
   });
 
   it("persistence check is recorded before any controlled kill (taskkill)", () => {

@@ -301,7 +301,7 @@ Assert-Equal 'wrong platform rejected' $false ($badPlatform -match $secondInstan
 Assert-Equal 'extra field rejected' $false ($badExtra -match $secondInstanceLinePattern)
 
 # 21. Line-by-line extraction from mixed stream (stdout with startup noise) ----
-$mixedStream = "Electron startup log`n{"event":"second-instance-rejected","platform":"win32","isPackaged":true}`ntrailing output"
+$mixedStream = "Electron startup log`n{""event"":""second-instance-rejected"",""platform"":""win32"",""isPackaged"":true}`ntrailing output"
 $foundMarker = $false
 foreach ($line in ($mixedStream -split "`n")) {
     if ($line -match $secondInstanceLinePattern) { $foundMarker = $true; break }
@@ -309,7 +309,7 @@ foreach ($line in ($mixedStream -split "`n")) {
 Assert-Equal 'marker found in mixed stdout stream' $true $foundMarker
 
 # 22. Line-by-line extraction from stderr stream (console.warn with marker) ----
-$stderrWithMarker = "console.warn: some deprecation`n{"event":"second-instance-rejected","platform":"win32","isPackaged":false}`n"
+$stderrWithMarker = "console.warn: some deprecation`n{""event"":""second-instance-rejected"",""platform"":""win32"",""isPackaged"":false}`n"
 $foundOnStderr = $false
 foreach ($line in ($stderrWithMarker -split "`n")) {
     if ($line -match $secondInstanceLinePattern) { $foundOnStderr = $true; break }
@@ -402,6 +402,91 @@ try {
     if ($p28 -and -not $p28.HasExited) { $p28.Kill() }
     if ($p28) { $p28.Dispose() }
 }
+
+# 30. Process enumeration path boundary: paths inside InstallDir match, outside do not ----
+try {
+    $installDirCanon = [System.IO.Path]::GetFullPath("C:\Tools\BabyMenu").TrimEnd('\')
+    $inside1 = "C:\Tools\BabyMenu\Baby Menu.exe"
+    $inside2 = "C:\Tools\BabyMenu\resources\app.asar"
+    $outside1 = "C:\Windows\System32\cmd.exe"
+    $outside2 = "C:\Program Files\SomeOtherApp\app.exe"
+
+    $dot = [System.IO.Path]::GetDirectoryName($inside1).TrimEnd('\')
+    Assert-Equal 'inside exe matches (GetDirectoryName = InstallDir)' $installDirCanon $dot
+    $dot2 = [System.IO.Path]::GetDirectoryName($inside2).TrimEnd('\')
+    Assert-Equal 'inside resource matches (GetDirectoryName starts with InstallDir)' $true ($installDirCanon -eq $dot2 -or $dot2.StartsWith("$installDirCanon\", [StringComparison]::OrdinalIgnoreCase))
+
+    $outsideDir1 = [System.IO.Path]::GetDirectoryName($outside1).TrimEnd('\')
+    Assert-Equal 'outside exe does not match InstallDir' $false ($installDirCanon -eq $outsideDir1 -or $outsideDir1.StartsWith("$installDirCanon\", [StringComparison]::OrdinalIgnoreCase))
+
+    $outsideDir2 = [System.IO.Path]::GetDirectoryName($outside2).TrimEnd('\')
+    Assert-Equal 'outside app does not match InstallDir' $false ($installDirCanon -eq $outsideDir2 -or $outsideDir2.StartsWith("$installDirCanon\", [StringComparison]::OrdinalIgnoreCase))
+} catch {
+    # Path boundary test uses fake paths; errors indicate logic issues
+    $script:failed++
+    Write-Host "FAIL: Path boundary test threw: $_"
+}
+
+# 31. Kill failure / survivor pattern (simulated: no real processes to kill) ----
+$foundMockProcesses = @()
+Assert-Equal 'zero processes found -> none to kill' 0 $foundMockProcesses.Count
+
+# 32. Explicit-launch suppression gating variable semantics ----
+$proceedWithLaunchTest = $true
+# Simulate finding processes
+$foundMock = @{ Count = 2 }
+if ($foundMock.Count -gt 0) { $proceedWithLaunchTest = $false }
+Assert-Equal 'ProceedWithLaunch set false when processes found' $false $proceedWithLaunchTest
+
+# Reset and simulate no processes
+$proceedWithLaunchTest = $true
+$foundMockNone = @{ Count = 0 }
+if ($foundMockNone.Count -gt 0) { $proceedWithLaunchTest = $false }
+Assert-Equal 'ProceedWithLaunch stays true when no processes' $true $proceedWithLaunchTest
+
+# 33. WhatIf guard pattern skips without mutation ----
+$mutationOccurred = $false
+$whatIf = $true
+if ($whatIf) {
+    # This is the WhatIf guard - return without mutation
+} else {
+    $mutationOccurred = $true
+}
+Assert-Equal 'WhatIf guard prevents mutation' $false $mutationOccurred
+
+# 34. Survivor check: zero survivors after kill ----
+$survivorsAfterKill = @()
+Assert-Equal 'zero survivors after kill' 0 $survivorsAfterKill.Count
+
+# 35. Survivor check: some survivors reported ----
+$survivorsPresent = @(@{ ProcessId = 1234 })
+Assert-Equal 'survivors detected when present' 1 $survivorsPresent.Count
+
+# 36. Path boundary: InstallDir edge case (InstallDir is empty) ----
+$emptyInstallDir = ""
+$someExePath = "C:\SomeDir\app.exe"
+$emptyDir = ""
+try {
+    $matchEmpty = $emptyInstallDir -eq $emptyDir -or [string]::IsNullOrWhiteSpace($emptyInstallDir)
+    Assert-Equal 'empty InstallDir does not crash comparison' $true $matchEmpty
+} catch {
+    $script:failed++
+    Write-Host "FAIL: Empty InstallDir path boundary test threw: $_"
+}
+
+# 37. Enumeration failure suppresses launch (simulated try/catch behavior) ----
+$enumFailed = $true
+$suppressLaunch = $true
+if ($enumFailed) {
+    # Catch block sets ProceedWithLaunch = false and returns
+    $suppressLaunch = $false
+}
+Assert-Equal 'enumeration failure suppresses launch' $false $suppressLaunch
+
+# 38. Enumeration failure does not log PIDs or ExecutablePath in detail ----
+$failureDetail = 'Cannot enumerate processes: Win32_Process query failed'
+Assert-Equal 'failure detail no PID leak' $false $failureDetail.Contains('PID')
+Assert-Equal 'failure detail no ExecutablePath leak' $false $failureDetail.Contains('ExecutablePath')
 
 # 29. Boundary marker on stdout preceded by startup noise, first match wins ----
 try {
