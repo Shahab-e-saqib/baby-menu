@@ -277,4 +277,63 @@ describe("windows-native-validation", () => {
     expect(content).toMatch(/surviving process/);
     expect(content).toMatch(/no descendants under InstallDir remain/);
   });
+
+  // ---- Regression tests for plan-only zero-mutation fix ----
+
+  it("plan-only Write-Evidence returns JSON before any New-Item or Out-File", () => {
+    // The plan guard must short-circuit before creating DiagnosticDir or writing files.
+    const weFunc = content.match(/^function Write-Evidence \{[\s\S]*?^}/m);
+    expect(weFunc).not.toBeNull();
+    const funcBody = weFunc![0];
+    const returnJsonIdx = funcBody.indexOf("return $json");
+    const newItemIdx = funcBody.indexOf("New-Item");
+    const outFileIdx = funcBody.indexOf("Out-File");
+    expect(returnJsonIdx).toBeGreaterThan(0);
+    expect(returnJsonIdx).toBeLessThan(newItemIdx);
+    expect(returnJsonIdx).toBeLessThan(outFileIdx);
+  });
+
+  it("plan-only Write-Evidence adds PlanOnly=true marker to evidence JSON", () => {
+    expect(content).toMatch(/evidence\.PlanOnly\s*=\s*\$true/);
+  });
+
+  it("guard failure catch does not write temp file in plan mode", () => {
+    // Out-File must appear after the $WhatIfPreference guard in the catch block
+    const catchBlock = content.match(/catch \{[\s\S]*?exit 1/);
+    expect(catchBlock).not.toBeNull();
+    const cb = catchBlock![0];
+    expect(cb).toContain("$WhatIfPreference");
+    const outFilePos = cb.indexOf("Out-File");
+    const guardPos = cb.indexOf("$WhatIfPreference");
+    expect(guardPos).toBeGreaterThan(0);
+    expect(outFilePos).toBeGreaterThan(guardPos);
+  });
+
+  it("actual mode Write-Evidence still creates directory and writes file", () => {
+    // After the plan-only early return, the remainder must still produce evidence
+    const weFunc = content.match(/^function Write-Evidence \{[\s\S]*?^}/m);
+    expect(weFunc).not.toBeNull();
+    const funcBody = weFunc![0];
+    const afterReturn = funcBody.split("return $json")[1] || "";
+    expect(afterReturn).toMatch(/New-Item/);
+    expect(afterReturn).toMatch(/Out-File/);
+    expect(afterReturn).toMatch(/evidencePath/);
+  });
+
+  it("plan-only evidence has explicit BEGIN and END markers around JSON for deterministic parsing", () => {
+    expect(content).toMatch(/BEGIN PLAN-ONLY EVIDENCE/);
+    expect(content).toMatch(/END PLAN-ONLY EVIDENCE/);
+    // Both markers must wrap the evidence JSON output
+    const markerBlock = content.match(/"--- BEGIN PLAN-ONLY EVIDENCE ---"[\s\S]*?"--- END PLAN-ONLY EVIDENCE ---"/);
+    expect(markerBlock).not.toBeNull();
+    const block = markerBlock![0];
+    // JSON output must appear between BEGIN and END
+    expect(block).toMatch(/\$evidenceResult/);
+    // BEGIN marker must come before the JSON output, END after
+    const beginIdx = block.indexOf("BEGIN PLAN-ONLY EVIDENCE");
+    const endIdx = block.indexOf("END PLAN-ONLY EVIDENCE");
+    const jsonOutputIdx = block.indexOf("\$evidenceResult");
+    expect(beginIdx).toBeLessThan(jsonOutputIdx);
+    expect(jsonOutputIdx).toBeLessThan(endIdx);
+  });
 });

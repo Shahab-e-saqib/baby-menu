@@ -78,10 +78,17 @@ function Write-Evidence {
         Checks         = $script:Checks
         SecretRedacted = $true
     }
+    if ($WhatIfPreference) {
+        $evidence.PlanOnly = $true
+    }
     $json = $evidence | ConvertTo-Json -Depth 5
     $json = $json -replace '(?i)(access_key|secret_key|password|token|credential|api[_-]?key|auth[_-]?token)\s*[:=]\s*"([^"]{4,})"', '${1}: "**REDACTED**"'
     $json = $json -replace '(?i)("password|"token|"secret)[^"]*"', '"**REDACTED**"'
     $json = $json -replace '(?i)(AAAA[ A-Za-z0-9+/]{20,}={0,2})', '"**REDACTED-BASE64**"'
+
+    if ($WhatIfPreference) {
+        return $json
+    }
 
     if (-not (Test-Path $DiagnosticDir)) {
         $null = New-Item -ItemType Directory -Path $DiagnosticDir -Force
@@ -545,9 +552,11 @@ try {
     Assert-ExistingPathSafe -Path $DiagnosticDir -Label 'DiagnosticDir'
 } catch {
     Write-Error "Guard failed: $_"
-    $tempPath = Join-Path $env:TEMP "baby-menu-validation-guard-failure-$([DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')).txt"
-    "Guard failed at $(Get-Date -Format 'o'): $_" | Out-File -FilePath $tempPath -Encoding utf8
-    Write-Warning "Failure logged to $tempPath"
+    if (-not $WhatIfPreference) {
+        $tempPath = Join-Path $env:TEMP "baby-menu-validation-guard-failure-$([DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')).txt"
+        "Guard failed at $(Get-Date -Format 'o'): $_" | Out-File -FilePath $tempPath -Encoding utf8
+        Write-Warning "Failure logged to $tempPath"
+    }
     exit 1
 }
 
@@ -634,7 +643,16 @@ foreach ($check in $manualChecks) {
 
 # Evidence
 Write-Host ''
-$evidencePath = Write-Evidence
+$evidenceResult = Write-Evidence
+
+if ($WhatIfPreference) {
+    Write-Host "--- BEGIN PLAN-ONLY EVIDENCE ---"
+    Write-Host $evidenceResult
+    Write-Host "--- END PLAN-ONLY EVIDENCE ---"
+    Write-Host ''
+} else {
+    Write-Host "Evidence bundle: $evidenceResult"
+}
 
 # Summary
 Write-Host ''
@@ -658,6 +676,5 @@ if ($WhatIfPreference) {
 }
 
 Write-Host ''
-Write-Host "Evidence bundle: $evidencePath"
 
 if ($failed -gt 0) { exit 1 }

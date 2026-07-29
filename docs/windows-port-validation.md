@@ -147,25 +147,25 @@ The `windows` CI job runs 38 test files spanning platform units, extension infra
 Many specs execute `/bin/bash`/`/bin/sh`, rely on Unix fixtures (shebangs, `chmod`, symlinks), or are explicitly `skipIf(win32)` — 10 `skipIf(win32)` guards cover symlink, chmod, and Nix-store-specific test cases across `extension-seeder`, `extension-module-compiler`, `widget-tailwind-css`, `layout-module-registry`, and `dev-extension-change-session`.
 Porting core ACP/change-session e2e (removing win32 skips in `tests/e2e-acp-runtime.test.ts`) is not done here.
 
-### E. Out of scope for this milestone entirely
+### E. Remaining out-of-scope items
 
-NSIS installer, Authenticode signing, update copy, recipe platform-filtering/parity, or any greenfield rewrite.
+Update copy, recipe platform-filtering/parity, or any greenfield rewrite.
 
 ## Native Windows validation runner
 
-A self-contained PowerShell validation runner lives at `scripts/windows-validate.ps1` (requires PowerShell 7+ on a native Windows host from a drive-letter path). It automates deterministic checks over an already-built NSIS installer and documents the boundary between automated evidence and still-manual GUI proof.
+A self-contained PowerShell validation runner lives at `scripts/windows-validate.ps1` (requires Windows PowerShell 5.1+ on a native Windows host from a drive-letter path). It automates deterministic checks over an already-built NSIS installer and documents the boundary between automated evidence and still-manual GUI proof.
 
 **Plan-only (no mutation):**
 ```
-powershell -File scripts/windows-validate.ps1 <InstallerPath> <InstallDir> <UserDataDir> -WhatIf
+powershell -File scripts/windows-validate.ps1 -InstallerPath <InstallerPath> -InstallDir <InstallDir> -UserDataDir <UserDataDir> -WhatIf
 ```
 
-**Opt-in install/uninstall/launch:**
+**Install/uninstall/launch (all three required together):**
 ```
-powershell -File scripts/windows-validate.ps1 <InstallerPath> <InstallDir> <UserDataDir> -AllowInstall [-AllowUninstall] [-AllowLaunch]
+powershell -File scripts/windows-validate.ps1 -InstallerPath <InstallerPath> -InstallDir <InstallDir> -UserDataDir <UserDataDir> -AllowInstall -AllowUninstall -AllowLaunch
 ```
 
-Evidence JSON (pass/fail/skip with secret redaction) is written under `<InstallDir>-diagnostic/evidence-<timestamp>.json`.
+Evidence JSON (pass/fail/skip with secret redaction) is written under `<InstallDir>-diagnostic/evidence-<timestamp>.json` when mutation flags are provided. In `-WhatIf` plan-only mode, evidence is returned in-memory and rendered to stdout with a `PlanOnly=true` marker and no files are created.
 
 **Boundary:** All checks in the runner are either automated deterministic assertions (pass/fail) or explicitly marked `skip` with `ManualGuidance`. The following are genuinely manual GUI-only checks that a human must verify:
 - tray icon appearance on the taskbar
