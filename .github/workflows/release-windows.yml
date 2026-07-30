@@ -51,25 +51,41 @@ jobs:
           BABY_MENU_UMAMI_WEBSITE_ID: ${{ vars.BABY_MENU_UMAMI_WEBSITE_ID }}
         run: pnpm build
 
-      - name: Guard against unsigned public GitHub Release
+      - name: Guard early notification for unsigned tag build
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         run: |
+          $tsEndpoint = "${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}"
+          $tsAccount = "${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT }}"
+          $tsCertProfile = "${{ vars.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}"
+          $tsClientId = "${{ vars.AZURE_CLIENT_ID }}"
+          $tsTenantId = "${{ vars.AZURE_TENANT_ID }}"
+          $tsSubId = "${{ vars.AZURE_SUBSCRIPTION_ID }}"
           $cscLink = "${{ secrets.WIN_CSC_LINK }}"
           $cscPwd = "${{ secrets.WIN_CSC_KEY_PASSWORD }}"
-          if ([string]::IsNullOrEmpty($cscLink) -or [string]::IsNullOrEmpty($cscPwd)) {
-            Write-Error "::error::Public GitHub Release requires Authenticode signing certificates. Set WIN_CSC_LINK and WIN_CSC_KEY_PASSWORD secrets."
+          $tsAllSet = @($tsEndpoint, $tsAccount, $tsCertProfile, $tsClientId, $tsTenantId, $tsSubId) | ForEach-Object { -not [string]::IsNullOrEmpty($_) } | Where-Object { $_ -eq $false }
+          $tsAllSet = ($tsAllSet.Count -eq 0)
+          $tsAnySet = @($tsEndpoint, $tsAccount, $tsCertProfile, $tsClientId, $tsTenantId, $tsSubId) | Where-Object { -not [string]::IsNullOrEmpty($_) } | Select-Object -First 1
+          $tsAnySet = ($null -ne $tsAnySet)
+          $pfxReady = (-not [string]::IsNullOrEmpty($cscLink)) -and (-not [string]::IsNullOrEmpty($cscPwd))
+          if ($tsAnySet -and -not $tsAllSet) {
+            Write-Error "::error::Partial Trusted Signing configuration detected. Set all 6 TS variables (AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, AZURE_TRUSTED_SIGNING_ENDPOINT, AZURE_TRUSTED_SIGNING_ACCOUNT, AZURE_TRUSTED_SIGNING_CERT_PROFILE) or none to use PFX fallback."
             exit 1
+          }
+          if (-not $tsAllSet -and -not $pfxReady) {
+            Write-Host "::warning::No signing provider configured in build job; sign job will fail if this is a tag push."
           }
 
       - name: Build NSIS installer
         shell: pwsh
         run: npx electron-builder --win --x64
         env:
-          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          # PFX tag path: pass CSC_LINK so electron-builder signs during build.
+          # TS or manual path: CSC_LINK unset so electron-builder produces unsigned installer.
+          CSC_LINK: ${{ (startsWith(github.ref, 'refs/tags/') && vars.AZURE_TRUSTED_SIGNING_ENDPOINT == '' && secrets.WIN_CSC_LINK) || '' }}
+          CSC_KEY_PASSWORD: ${{ (startsWith(github.ref, 'refs/tags/') && vars.AZURE_TRUSTED_SIGNING_ENDPOINT == '' && secrets.WIN_CSC_KEY_PASSWORD) || '' }}
 
-      - name: Resolve installer for deterministic artifact matching
+      - name: Resolve installer deterministically
         id: installer
         shell: pwsh
         run: |
@@ -82,11 +98,151 @@ jobs:
             Write-Error "::error::Multiple installers found in release/: $($matches.Name -join ', ')"
             exit 1
           }
-          echo "path=$($matches[0].FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          $abs = $matches[0].FullName
+          echo "path=$abs" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           echo "name=$($matches[0].Name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "Resolved installer: $($matches[0].Name)"
 
-      - name: Verify Authenticode signature (release build)
+      - name: Compute SHA-256 checksum (manual dry-run)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        id: checksum
+        shell: pwsh
+        run: |
+          $installerPath = "${{ steps.installer.outputs.path }}"
+          $installerName = "${{ steps.installer.outputs.name }}"
+          $hash = (Get-FileHash -Path $installerPath -Algorithm SHA256).Hash.ToLower()
+          $checksumFile = "$installerName.sha256"
+          $dir = Split-Path -Parent $installerPath
+          Set-Content -Path "$dir/$checksumFile" -Value "$hash  $installerName"
+          Write-Host "SHA-256 checksum: $hash"
+          echo "hash=$hash" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Upload build candidate (tag path, sign job handoff)
         if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: baby-menu-win-x64-candidate
+          path: release/*.exe
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload unsigned manual artifact (dry-run, no signing)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: baby-menu-win-x64-installer
+          path: |
+            ${{ steps.installer.outputs.path }}
+            ${{ steps.installer.outputs.path }}.sha256
+          retention-days: 7
+          if-no-files-found: error
+
+  sign:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    environment: windows-release
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: baby-menu-win-x64-candidate
+          path: candidate
+
+      - name: Resolve installer deterministically
+        id: installer
+        shell: pwsh
+        run: |
+          $matches = Get-ChildItem -Path "candidate" -Filter "Baby-Menu-*.exe"
+          if ($matches.Count -eq 0) {
+            Write-Error "::error::No NSIS installer found in candidate/ directory"
+            exit 1
+          }
+          if ($matches.Count -gt 1) {
+            Write-Error "::error::Multiple installers found in candidate/: $($matches.Name -join ', ')"
+            exit 1
+          }
+          $abs = $matches[0].FullName
+          echo "path=$abs" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          echo "name=$($matches[0].Name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "Resolved installer: $abs"
+
+      - name: Determine provider and guard fully
+        id: provider
+        shell: pwsh
+        run: |
+          $errors = @()
+
+          # TS variables (all must be set or none)
+          $tsEndpoint = "${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}"
+          $tsAccount = "${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT }}"
+          $tsCertProfile = "${{ vars.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}"
+          $tsClientId = "${{ vars.AZURE_CLIENT_ID }}"
+          $tsTenantId = "${{ vars.AZURE_TENANT_ID }}"
+          $tsSubId = "${{ vars.AZURE_SUBSCRIPTION_ID }}"
+
+          $tsVals = @($tsEndpoint, $tsAccount, $tsCertProfile, $tsClientId, $tsTenantId, $tsSubId)
+          $tsEmpty = @($tsVals | Where-Object { [string]::IsNullOrEmpty($_) })
+          $tsNonEmpty = @($tsVals | Where-Object { -not [string]::IsNullOrEmpty($_) })
+
+          $tsAllSet = ($tsEmpty.Count -eq 0)
+          $tsAnySet = ($tsNonEmpty.Count -gt 0)
+
+          if ($tsAnySet -and -not $tsAllSet) {
+            $missing = @()
+            if ([string]::IsNullOrEmpty($tsEndpoint)) { $missing += "AZURE_TRUSTED_SIGNING_ENDPOINT" }
+            if ([string]::IsNullOrEmpty($tsAccount)) { $missing += "AZURE_TRUSTED_SIGNING_ACCOUNT" }
+            if ([string]::IsNullOrEmpty($tsCertProfile)) { $missing += "AZURE_TRUSTED_SIGNING_CERT_PROFILE" }
+            if ([string]::IsNullOrEmpty($tsClientId)) { $missing += "AZURE_CLIENT_ID" }
+            if ([string]::IsNullOrEmpty($tsTenantId)) { $missing += "AZURE_TENANT_ID" }
+            if ([string]::IsNullOrEmpty($tsSubId)) { $missing += "AZURE_SUBSCRIPTION_ID" }
+            Write-Error "::error::Partial Trusted Signing configuration. Missing: $($missing -join ', '). Set all 6 TS variables or none (PFX fallback)."
+            exit 1
+          }
+
+          if ($tsAllSet) {
+            Write-Host "provider=trusted-signing"
+            echo "provider=trusted-signing" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            exit 0
+          }
+
+          # PFX fallback
+          $cscLink = "${{ secrets.WIN_CSC_LINK }}"
+          $cscPwd = "${{ secrets.WIN_CSC_KEY_PASSWORD }}"
+          if (-not [string]::IsNullOrEmpty($cscLink) -and -not [string]::IsNullOrEmpty($cscPwd)) {
+            Write-Host "provider=pfx"
+            echo "provider=pfx" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            exit 0
+          }
+
+          Write-Error "::error::No signing provider configured. Set Trusted Signing variables or WIN_CSC_LINK/WIN_CSC_KEY_PASSWORD secrets."
+          exit 1
+
+      - name: Azure login (Trusted Signing)
+        if: steps.provider.outputs.provider == 'trusted-signing'
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0 (peeled commit)
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign with Trusted Signing
+        if: steps.provider.outputs.provider == 'trusted-signing'
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0 (peeled commit)
+        with:
+          endpoint: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
+          files: ${{ steps.installer.outputs.path }}
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify Authenticode signature and timestamp
         shell: pwsh
         run: |
           $sig = Get-AuthenticodeSignature -FilePath "${{ steps.installer.outputs.path }}"
@@ -94,16 +250,23 @@ jobs:
             Write-Error "::error::Authenticode signature verification FAILED: $($sig.StatusMessage)"
             exit 1
           }
-          Write-Host "Authenticode signature verified successfully"
+          if ($null -eq $sig.TimeStamperCertificate) {
+            Write-Error "::error::Authenticode signature is missing RFC3161 timestamp (required for code signing)"
+            exit 1
+          }
+          Write-Host "Authenticode signature verified successfully with timestamp"
 
       - name: Rename signed installer (remove -unsigned suffix)
-        if: startsWith(github.ref, 'refs/tags/')
         id: rename
         shell: pwsh
         run: |
+          $oldPath = "${{ steps.installer.outputs.path }}"
           $oldName = "${{ steps.installer.outputs.name }}"
+          $dir = Split-Path -Parent $oldPath
           $newName = $oldName -replace '-unsigned', ''
-          Rename-Item -Path "${{ steps.installer.outputs.path }}" -NewName $newName
+          $newPath = Join-Path -Path $dir -ChildPath $newName
+          Rename-Item -Path $oldPath -NewName $newName
+          echo "path=$newPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           echo "name=$newName" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           Write-Host "Renamed $oldName -> $newName"
 
@@ -111,25 +274,27 @@ jobs:
         id: checksum
         shell: pwsh
         run: |
-          $installerName = "${{ steps.rename.outputs.name || steps.installer.outputs.name }}"
-          $hash = (Get-FileHash -Path "release/$installerName" -Algorithm SHA256).Hash.ToLower()
+          $installerPath = "${{ steps.rename.outputs.path }}"
+          $installerName = "${{ steps.rename.outputs.name }}"
+          $hash = (Get-FileHash -Path $installerPath -Algorithm SHA256).Hash.ToLower()
           $checksumFile = "$installerName.sha256"
-          Set-Content -Path "release/$checksumFile" -Value "$hash  $installerName"
+          $dir = Split-Path -Parent $installerPath
+          Set-Content -Path "$dir/$checksumFile" -Value "$hash  $installerName"
           Write-Host "SHA-256 checksum: $hash"
           echo "hash=$hash" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
-      - name: Upload installer as build artifact
+      - name: Upload release artifact
         uses: actions/upload-artifact@v4
         with:
-          name: baby-menu-win-x64-installer
+          name: baby-menu-win-x64-release
           path: |
-            release/*.exe
-            release/*.sha256
-          retention-days: ${{ startsWith(github.ref, 'refs/tags/') && 1 || 7 }}
+            ${{ steps.rename.outputs.path }}
+            ${{ steps.rename.outputs.path }}.sha256
+          retention-days: 1
           if-no-files-found: error
 
   publish:
-    needs: build
+    needs: sign
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: windows-latest
     permissions:
@@ -137,7 +302,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: baby-menu-win-x64-installer
+          name: baby-menu-win-x64-release
           path: release
 
       - name: Create or verify GitHub Release exists
