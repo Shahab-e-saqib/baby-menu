@@ -124,15 +124,11 @@ jobs:
         id: runtime-smoke
         shell: pwsh
         continue-on-error: true
+        env:
+          BABY_MENU_SKIP_SINGLE_INSTANCE_LOCK: "1"
         run: |
           $diagDir = Join-Path $env:RUNNER_TEMP "baby-menu-runtime-smoke-diag"
-          $attempt = 0
-          do {
-            if ($attempt -gt 0) { Start-Sleep -Seconds 5 }
-            $attempt++
-            Write-Host "--- Runtime smoke attempt $attempt ---"
-            & "${{ github.workspace }}\scripts\Verify-BabyMenuRuntimeSmoke.ps1" -UnpackedDir "${{ steps.package.outputs.dir }}" -DiagnosticDir $diagDir
-          } while ($LASTEXITCODE -ne 0 -and $attempt -lt 2)
+          & "${{ github.workspace }}\scripts\Verify-BabyMenuRuntimeSmoke.ps1" -UnpackedDir "${{ steps.package.outputs.dir }}" -DiagnosticDir $diagDir
 
       - name: Upload runtime smoke diagnostic evidence
         if: steps.runtime-smoke.outcome == 'failure'

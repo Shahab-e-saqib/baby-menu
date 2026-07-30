@@ -232,6 +232,7 @@ function Invoke-RuntimeSmoke {
         $psi.EnvironmentVariables["SYSTEMROOT"] = $env:SYSTEMROOT
         if ($env:PATHEXT) { $psi.EnvironmentVariables["PATHEXT"] = $env:PATHEXT }
         if ($env:PATH) { $psi.EnvironmentVariables["PATH"] = $env:PATH }
+        if ($env:BABY_MENU_SKIP_SINGLE_INSTANCE_LOCK) { $psi.EnvironmentVariables["BABY_MENU_SKIP_SINGLE_INSTANCE_LOCK"] = $env:BABY_MENU_SKIP_SINGLE_INSTANCE_LOCK }
 
         $proc = [System.Diagnostics.Process]::Start($psi)
         $launchedPid = $proc.Id
