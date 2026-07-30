@@ -305,7 +305,6 @@ function Invoke-RuntimeSmoke {
         }
 
         $diagnostics.wasAliveAtDeadline = -not $proc.HasExited
-        $nodeFunctionalPassed = $false  # set by the electron-node-functional check if it ran
 
         # ---- Persistence check ----
         if ($diagnostics.wasAliveAtDeadline) {
