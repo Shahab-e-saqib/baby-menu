@@ -228,8 +228,9 @@ function Invoke-RuntimeSmoke {
         # in app.ts is too late for headless Windows CI). Scoped behind the
         # BABY_MENU_DISABLE_GPU env var so production installs are unaffected.
         if ($env:BABY_MENU_DISABLE_GPU) {
-            $psi.Arguments = "--no-sandbox --disable-gpu --in-process-gpu"
+            $psi.Arguments = "--no-sandbox --disable-gpu --in-process-gpu --disable-gpu-sandbox --disable-software-rasterizer"
         }
+        Write-Host "  [INFO] Launch command: $($exePath) $($psi.Arguments)"
 
         # Minimal env allowlist — never inherit CI secrets (GITHUB_, ACTIONS_, etc.)
         $psi.EnvironmentVariables.Clear()
