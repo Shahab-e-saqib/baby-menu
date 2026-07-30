@@ -310,7 +310,7 @@ function Invoke-RuntimeSmoke {
             $proc.WaitForExit(2000) | Out-Null
             if ($proc.HasExited) { $diagnostics.exitCode = $proc.ExitCode }
             # Headless Windows CI (Windows Server 2025) crashes Chromium content
-            # init with STATUS_BREAKPOINT even with --no-sandbox --disable-gpu.
+            # init with STATUS_BREAKPOINT.
             # This is a CI environment limitation - the binary and Node.js work
             # correctly (verified by electron-node-functional). Accept the exit code
             # when running under the BABY_MENU_DISABLE_GPU env var (set only in CI).
