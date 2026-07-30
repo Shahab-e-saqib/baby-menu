@@ -126,6 +126,7 @@ jobs:
         continue-on-error: true
         env:
           BABY_MENU_SKIP_SINGLE_INSTANCE_LOCK: "1"
+          BABY_MENU_DISABLE_GPU: "1"
         run: |
           $diagDir = Join-Path $env:RUNNER_TEMP "baby-menu-runtime-smoke-diag"
           & "${{ github.workspace }}\scripts\Verify-BabyMenuRuntimeSmoke.ps1" -UnpackedDir "${{ steps.package.outputs.dir }}" -DiagnosticDir $diagDir
