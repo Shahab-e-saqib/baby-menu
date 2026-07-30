@@ -100,7 +100,7 @@ if (!windowsAdapterLaunchRequest) {
         isPackaged: app.isPackaged,
       }),
     );
-    app.quit();
+    app.exit(0);
   }
 }
 

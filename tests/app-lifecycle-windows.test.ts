@@ -23,6 +23,7 @@ const electronApp = {
   on: vi.fn(),
   whenReady: vi.fn(async () => undefined),
   quit: vi.fn(),
+  exit: vi.fn(),
   requestSingleInstanceLock: vi.fn(() => true),
   setAppUserModelId: vi.fn(),
 };
@@ -135,16 +136,17 @@ describe("Windows shell lifecycle", () => {
     expect(electronApp.on).toHaveBeenCalledWith("second-instance", expect.any(Function));
   });
 
-  it("quits the second process when the single-instance lock is already held", async () => {
+  it("exits the second process when the single-instance lock is already held", async () => {
     electronApp.requestSingleInstanceLock.mockReturnValue(false);
 
     await import("../src/main/app");
 
     expect(electronApp.requestSingleInstanceLock).toHaveBeenCalledExactlyOnceWith();
-    expect(electronApp.quit).toHaveBeenCalledExactlyOnceWith();
+    expect(electronApp.exit).toHaveBeenCalledExactlyOnceWith(0);
+    expect(electronApp.quit).not.toHaveBeenCalled();
   });
 
-  it("emits a structured console.warn on lock denial before quitting", async () => {
+  it("emits a structured console.warn on lock denial before calling app.exit(0)", async () => {
     electronApp.requestSingleInstanceLock.mockReturnValue(false);
 
     await import("../src/main/app");
@@ -159,11 +161,12 @@ describe("Windows shell lifecycle", () => {
       isPackaged: false,
     });
     expect(Object.keys(parsed)).toStrictEqual(["event", "platform", "isPackaged"]);
-    expect(electronApp.quit).toHaveBeenCalledExactlyOnceWith();
-    // Verify warn was called before quit
+    expect(electronApp.exit).toHaveBeenCalledExactlyOnceWith(0);
+    expect(electronApp.quit).not.toHaveBeenCalled();
+    // Verify warn was called before exit
     const warnCallIndex = (console.warn as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
-    const quitCallIndex = electronApp.quit.mock.invocationCallOrder[0];
-    expect(warnCallIndex).toBeLessThan(quitCallIndex);
+    const exitCallIndex = electronApp.exit.mock.invocationCallOrder[0];
+    expect(warnCallIndex).toBeLessThan(exitCallIndex);
   });
 
   it("does not emit a warning when the single-instance lock is acquired", async () => {
@@ -242,4 +245,5 @@ describe("Windows shell lifecycle", () => {
 
     expect(electronApp.setAppUserModelId).not.toHaveBeenCalled();
   });
+
 });
