@@ -265,10 +265,7 @@ function Invoke-RuntimeSmoke {
             Add-CheckResult -Name 'electron-node-functional' -Status 'fail' -Detail "threw: $_"
         }
 
-        if ($env:BABY_MENU_DISABLE_GPU) {
-            $psi.Arguments = "--no-sandbox --disable-gpu --disable-software-rasterizer"
-        }
-        Write-Host "  [INFO] Launch command: $($exePath) $($psi.Arguments)"
+        Write-Host "  [INFO] Launch command: $($exePath)"
 
         # Minimal env allowlist — never inherit CI secrets (GITHUB_, ACTIONS_, etc.)
         $psi.EnvironmentVariables.Clear()
