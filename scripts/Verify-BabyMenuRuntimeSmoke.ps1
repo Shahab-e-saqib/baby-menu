@@ -240,6 +240,7 @@ function Invoke-RuntimeSmoke {
             $jsTestPsi.RedirectStandardError = $true
             $jsTestPsi.CreateNoWindow = $true
             # No -- flags here - they leak to Node.js under ELECTRON_RUN_AS_NODE
+            # Test 1: simple Node.js eval
             $jsTestPsi.Arguments = "-e console.log('node_ok');process.exit(0)"
             $jsTestPsi.EnvironmentVariables.Clear()
             $jsTestPsi.EnvironmentVariables["ELECTRON_RUN_AS_NODE"] = "1"
@@ -263,7 +264,7 @@ function Invoke-RuntimeSmoke {
         }
 
         if ($env:BABY_MENU_DISABLE_GPU) {
-            $psi.Arguments = "--no-sandbox --disable-gpu --in-process-gpu --disable-gpu-sandbox --disable-software-rasterizer"
+            $psi.Arguments = "--no-sandbox --disable-gpu --no-asar"
         }
         Write-Host "  [INFO] Launch command: $($exePath) $($psi.Arguments)"
 
