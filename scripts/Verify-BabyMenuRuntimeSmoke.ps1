@@ -227,40 +227,40 @@ function Invoke-RuntimeSmoke {
         # level before any JS module evaluation (app.disableHardwareAcceleration
         # in app.ts is too late for headless Windows CI). Scoped behind the
         # BABY_MENU_DISABLE_GPU env var so production installs are unaffected.
-        # Test 1: binary is executable and Electron base is functional
+        #
+        # Diagnostic: prove Node.js runs inside the Electron binary before the
+        # asar is loaded. If this works, the crash is in the asar / our module.
         try {
-            $verPsi = New-Object System.Diagnostics.ProcessStartInfo
-            $verPsi.FileName = $exePath
-            $verPsi.UseShellExecute = $false
-            $verPsi.RedirectStandardOutput = $true
-            $verPsi.RedirectStandardError = $true
-            $verPsi.CreateNoWindow = $true
-            $verPsi.Arguments = "--version"
-            $verPsi.EnvironmentVariables.Clear()
-            foreach ($kv in $isolatedDirs.GetEnumerator()) {
-                $verPsi.EnvironmentVariables[$kv.Key] = $kv.Value
-            }
-            $verPsi.EnvironmentVariables["TEMP"] = $isolatedTemp
-            $verPsi.EnvironmentVariables["TMP"] = $isolatedTemp
-            $verPsi.EnvironmentVariables["SYSTEMROOT"] = $env:SYSTEMROOT
-            $verProc = [System.Diagnostics.Process]::Start($verPsi)
-            if ($verProc.WaitForExit(10000)) {
-                $verOut = $verProc.StandardOutput.ReadToEnd()
-                $verCode = $verProc.ExitCode
-                if ($verCode -eq 0 -and $verOut -match '\d+\.\d+\.\d+') {
-                    Add-CheckResult -Name 'base-electron-functional' -Status 'pass' -Detail "$($verOut.Trim())"
+            $jsTestPsi = New-Object System.Diagnostics.ProcessStartInfo
+            $jsTestPsi.FileName = $exePath
+            $jsTestPsi.UseShellExecute = $false
+            $jsTestPsi.RedirectStandardOutput = $true
+            $jsTestPsi.RedirectStandardError = $true
+            $jsTestPsi.CreateNoWindow = $true
+            $jsTestPsi.Arguments = "--no-sandbox --disable-gpu --in-process-gpu --disable-gpu-sandbox --disable-software-rasterizer -e console.log('node_ok');process.exit(0)"
+            $jsTestPsi.EnvironmentVariables.Clear()
+            $jsTestPsi.EnvironmentVariables["ELECTRON_RUN_AS_NODE"] = "1"
+            $jsTestPsi.EnvironmentVariables["TEMP"] = $isolatedTemp
+            $jsTestPsi.EnvironmentVariables["TMP"] = $isolatedTemp
+            $jsTestPsi.EnvironmentVariables["SYSTEMROOT"] = $env:SYSTEMROOT
+            $jsTestProc = [System.Diagnostics.Process]::Start($jsTestPsi)
+            if ($jsTestProc.WaitForExit(15000)) {
+                $jsOut = $jsTestProc.StandardOutput.ReadToEnd().Trim()
+                $jsCode = $jsTestProc.ExitCode
+                if ($jsCode -eq 0 -and $jsOut -eq 'node_ok') {
+                    Add-CheckResult -Name 'electron-node-functional' -Status 'pass' -Detail "Node.js in Electron binary works"
                 } else {
-                    Add-CheckResult -Name 'base-electron-functional' -Status 'fail' -Detail "exitCode=$verCode stdout=${verOut}"
+                    Add-CheckResult -Name 'electron-node-functional' -Status 'fail' -Detail "exitCode=$jsCode stdout=${jsOut}"
                 }
             } else {
-                Add-CheckResult -Name 'base-electron-functional' -Status 'fail' -Detail "binary timed out on --version"
+                Add-CheckResult -Name 'electron-node-functional' -Status 'fail' -Detail "timed out"
             }
         } catch {
-            Add-CheckResult -Name 'base-electron-functional' -Status 'fail' -Detail "binary threw on --version: $_"
+            Add-CheckResult -Name 'electron-node-functional' -Status 'fail' -Detail "threw: $_"
         }
 
         if ($env:BABY_MENU_DISABLE_GPU) {
-            $psi.Arguments = "--no-sandbox --disable-gpu --in-process-gpu --disable-gpu-sandbox --disable-software-rasterizer --single-process"
+            $psi.Arguments = "--no-sandbox --disable-gpu --in-process-gpu --disable-gpu-sandbox --disable-software-rasterizer"
         }
         Write-Host "  [INFO] Launch command: $($exePath) $($psi.Arguments)"
 
