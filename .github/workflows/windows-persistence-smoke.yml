@@ -1,0 +1,55 @@
+name: windows-persistence-smoke
+
+on:
+  workflow_dispatch:
+
+jobs:
+  persistence-smoke:
+    name: Strict GUI persistence smoke (interactive Windows only)
+    runs-on: [self-hosted, Windows, X64, baby-menu-interactive]
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.1.1
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Package Windows app (dir)
+        shell: pwsh
+        run: pnpm exec electron-builder --win dir --x64 --config electron-builder.yml --publish never
+
+      - name: Strict GUI persistence smoke
+        id: runtime-smoke
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $unpackedDir = (Resolve-Path "release/win-unpacked").Path
+          $diagDir = Join-Path $env:RUNNER_TEMP "baby-menu-runtime-smoke-diag"
+          & "${{ github.workspace }}\scripts\Verify-BabyMenuRuntimeSmoke.ps1" -UnpackedDir $unpackedDir -DiagnosticDir $diagDir
+
+      - name: Upload diagnostic evidence on failure
+        if: steps.runtime-smoke.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: baby-menu-windows-runtime-smoke-evidence
+          path: ${{ runner.temp }}\baby-menu-runtime-smoke-diag\*.json
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Fail job on smoke failure
+        if: steps.runtime-smoke.outcome == 'failure'
+        shell: pwsh
+        run: exit 1

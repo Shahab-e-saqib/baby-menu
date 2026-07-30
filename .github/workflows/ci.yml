@@ -120,27 +120,63 @@ jobs:
           $env:BABY_MENU_WINDOWS_PACKAGE_DIR = $packageDir
           pnpm vitest run tests/windows-packaging.test.ts
 
-      - name: Packaged runtime persistence smoke
-        id: runtime-smoke
+      - name: Verify packaged binary integrity and ELECTRON_RUN_AS_NODE
         shell: pwsh
-        continue-on-error: true
         run: |
-          $diagDir = Join-Path $env:RUNNER_TEMP "baby-menu-runtime-smoke-diag"
-          & "${{ github.workspace }}\scripts\Verify-BabyMenuRuntimeSmoke.ps1" -UnpackedDir "${{ steps.package.outputs.dir }}" -DiagnosticDir $diagDir
+          $packageDir = "${{ steps.package.outputs.dir }}"
+          $exe = Join-Path $packageDir "Baby Menu.exe"
+          if (-not (Test-Path $exe)) { throw "Missing Baby Menu.exe" }
 
-      - name: Upload runtime smoke diagnostic evidence
-        if: steps.runtime-smoke.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: baby-menu-windows-runtime-smoke-evidence
-          path: ${{ runner.temp }}\baby-menu-runtime-smoke-diag\*.json
-          retention-days: 1
-          if-no-files-found: warn
+          # PE header verification
+          $bytes = [System.IO.File]::ReadAllBytes($exe)
+          if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw "Not a valid PE (missing MZ magic)" }
+          Write-Host "[PASS] PE header valid - $exe ($($bytes.Length) bytes)"
 
-      - name: Fail job on runtime smoke failure
-        if: steps.runtime-smoke.outcome == 'failure'
-        shell: pwsh
-        run: exit 1
+          # Bounded ELECTRON_RUN_AS_NODE: runs a Node.js script inside the
+          # packaged Electron binary without starting a GUI. This proves the
+          # binary loads and executes bundled JS. Env is isolated so CI
+          # credentials (GITHUB_, ACTIONS_) are never visible to the child.
+          $testScript = @"
+          const expected = 'electron-run-as-node-' + process.pid;
+          process.stdout.write(expected);
+          process.exit(0);
+          "@
+
+          $tempDir = Join-Path $env:RUNNER_TEMP "baby-menu-binary-sanity-$([System.Guid]::NewGuid().ToString('N'))"
+          $null = New-Item -ItemType Directory -Path $tempDir -Force
+
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = $exe
+          $psi.Arguments = '-e', $testScript
+          $psi.UseShellExecute = $false
+          $psi.RedirectStandardOutput = $true
+          $psi.RedirectStandardError = $true
+          $psi.CreateNoWindow = $true
+          $psi.WorkingDirectory = $packageDir
+
+          # Isolated environment — never inherit CI secrets
+          $psi.EnvironmentVariables.Clear()
+          $psi.EnvironmentVariables['ELECTRON_RUN_AS_NODE'] = '1'
+          $psi.EnvironmentVariables['TEMP'] = $tempDir
+          $psi.EnvironmentVariables['TMP'] = $tempDir
+          $psi.EnvironmentVariables['SYSTEMROOT'] = $env:SYSTEMROOT
+          if ($env:PATHEXT) { $psi.EnvironmentVariables['PATHEXT'] = $env:PATHEXT }
+          if ($env:PATH) { $psi.EnvironmentVariables['PATH'] = $env:PATH }
+
+          $proc = [System.Diagnostics.Process]::Start($psi)
+          $stdout = $proc.StandardOutput.ReadToEnd()
+          $stderr = $proc.StandardError.ReadToEnd()
+          $proc.WaitForExit(10000) | Out-Null
+
+          $exitCode = $proc.ExitCode
+          if ($exitCode -ne 0) { throw "ELECTRON_RUN_AS_NODE exited with code $exitCode. stderr: $stderr" }
+          if ($stdout -notmatch '^electron-run-as-node-\d+$') { throw "Unexpected ELECTRON_RUN_AS_NODE output: $stdout" }
+          Write-Host "[PASS] ELECTRON_RUN_AS_NODE: $($stdout.Trim())"
+
+          # Cleanup
+          Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+          Write-Host "[PASS] Temp cleaned up"
+          Write-Host ''
 
       - name: Build x64 NSIS unsigned installer
         shell: pwsh

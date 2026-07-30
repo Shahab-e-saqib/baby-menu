@@ -30,6 +30,8 @@ describe("agent runtime distribution behavior", () => {
       currentPath: "/usr/bin:/bin",
       homeDir: "/Users/me",
       shellPath: "/opt/custom/bin:/usr/bin",
+      platform: "darwin",
+      pathDelimiter: ":",
     }).split(":");
 
     expect(merged).toContain("/opt/homebrew/bin");
