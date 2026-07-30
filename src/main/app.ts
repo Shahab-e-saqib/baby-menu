@@ -72,18 +72,22 @@ if (!windowsAdapterLaunchRequest) {
   registerBabyMenuProtocolSchemes();
 }
 
-// Windows application identity must be set before app.whenReady() so the
-// taskbar groups the running instance under the correct AppUserModelID.
-if (!windowsAdapterLaunchRequest && process.platform === "win32") {
-  app.setAppUserModelId("com.kunchenguid.baby-menu");
-}
-
 // Single-instance lock: only the first process creates the tray, popover,
 // runtime, and background services. A second process quits immediately.
+// Acquired BEFORE setting the Windows AppUserModelID so the lock scope uses
+// the default Electron identity (app path) instead of a fixed AppUserModelID
+// that would be shared across all builds, which can cause a fresh packaged
+// launch on Windows Server 2025+ to reject itself as a "second instance".
 let isPrimaryInstance = true;
 if (!windowsAdapterLaunchRequest) {
   isPrimaryInstance = app.requestSingleInstanceLock();
   if (isPrimaryInstance) {
+    // Windows application identity must be set before app.whenReady() so the
+    // taskbar groups the running instance under the correct AppUserModelID.
+    if (process.platform === "win32") {
+      app.setAppUserModelId("com.kunchenguid.baby-menu");
+    }
+
     app.on("second-instance", () => {
       if (popoverWindow && !popoverWindow.isDestroyed()) {
         if (!popoverWindow.isVisible()) {
