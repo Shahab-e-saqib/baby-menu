@@ -136,18 +136,19 @@ jobs:
           # packaged Electron binary without starting a GUI. This proves the
           # binary loads and executes bundled JS. Env is isolated so CI
           # credentials (GITHUB_, ACTIONS_) are never visible to the child.
-          $testScript = @"
-          const expected = 'electron-run-as-node-' + process.pid;
-          process.stdout.write(expected);
-          process.exit(0);
-          "@
-
           $tempDir = Join-Path $env:RUNNER_TEMP "baby-menu-binary-sanity-$([System.Guid]::NewGuid().ToString('N'))"
           $null = New-Item -ItemType Directory -Path $tempDir -Force
 
+          $scriptFile = Join-Path $tempDir "smoke-test.mjs"
+          @"
+          const expected = 'electron-run-as-node-' + process.pid;
+          process.stdout.write(expected);
+          process.exit(0);
+          "@ | Out-File -FilePath $scriptFile -Encoding utf8
+
           $psi = New-Object System.Diagnostics.ProcessStartInfo
           $psi.FileName = $exe
-          $psi.Arguments = '-e', $testScript
+          $psi.Arguments = $scriptFile
           $psi.UseShellExecute = $false
           $psi.RedirectStandardOutput = $true
           $psi.RedirectStandardError = $true
