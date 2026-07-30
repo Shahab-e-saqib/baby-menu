@@ -221,6 +221,16 @@ function Invoke-RuntimeSmoke {
         $psi.CreateNoWindow = $true
         $psi.WorkingDirectory = $unpackedCanon
 
+        # Headless Windows CI (Windows Server 2025, no GPU driver) crashes
+        # Chromium's GPU init with STATUS_BREAKPOINT. Pass GPU/sandbox
+        # switches as CLI args so Electron/Chromium sees them at the C++
+        # level before any JS module evaluation (app.disableHardwareAcceleration
+        # in app.ts is too late for headless Windows CI). Scoped behind the
+        # BABY_MENU_DISABLE_GPU env var so production installs are unaffected.
+        if ($env:BABY_MENU_DISABLE_GPU) {
+            $psi.Arguments = "--no-sandbox --disable-gpu --in-process-gpu"
+        }
+
         # Minimal env allowlist — never inherit CI secrets (GITHUB_, ACTIONS_, etc.)
         $psi.EnvironmentVariables.Clear()
         $psi.EnvironmentVariables["APPDATA"] = $isolatedDirs['APPDATA']
