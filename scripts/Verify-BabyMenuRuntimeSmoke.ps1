@@ -227,8 +227,40 @@ function Invoke-RuntimeSmoke {
         # level before any JS module evaluation (app.disableHardwareAcceleration
         # in app.ts is too late for headless Windows CI). Scoped behind the
         # BABY_MENU_DISABLE_GPU env var so production installs are unaffected.
+        # Test 1: binary is executable and Electron base is functional
+        try {
+            $verPsi = New-Object System.Diagnostics.ProcessStartInfo
+            $verPsi.FileName = $exePath
+            $verPsi.UseShellExecute = $false
+            $verPsi.RedirectStandardOutput = $true
+            $verPsi.RedirectStandardError = $true
+            $verPsi.CreateNoWindow = $true
+            $verPsi.Arguments = "--version"
+            $verPsi.EnvironmentVariables.Clear()
+            foreach ($kv in $isolatedDirs.GetEnumerator()) {
+                $verPsi.EnvironmentVariables[$kv.Key] = $kv.Value
+            }
+            $verPsi.EnvironmentVariables["TEMP"] = $isolatedTemp
+            $verPsi.EnvironmentVariables["TMP"] = $isolatedTemp
+            $verPsi.EnvironmentVariables["SYSTEMROOT"] = $env:SYSTEMROOT
+            $verProc = [System.Diagnostics.Process]::Start($verPsi)
+            if ($verProc.WaitForExit(10000)) {
+                $verOut = $verProc.StandardOutput.ReadToEnd()
+                $verCode = $verProc.ExitCode
+                if ($verCode -eq 0 -and $verOut -match '\d+\.\d+\.\d+') {
+                    Add-CheckResult -Name 'base-electron-functional' -Status 'pass' -Detail "$($verOut.Trim())"
+                } else {
+                    Add-CheckResult -Name 'base-electron-functional' -Status 'fail' -Detail "exitCode=$verCode stdout=${verOut}"
+                }
+            } else {
+                Add-CheckResult -Name 'base-electron-functional' -Status 'fail' -Detail "binary timed out on --version"
+            }
+        } catch {
+            Add-CheckResult -Name 'base-electron-functional' -Status 'fail' -Detail "binary threw on --version: $_"
+        }
+
         if ($env:BABY_MENU_DISABLE_GPU) {
-            $psi.Arguments = "--no-sandbox --disable-gpu --in-process-gpu --disable-gpu-sandbox --disable-software-rasterizer"
+            $psi.Arguments = "--no-sandbox --disable-gpu --in-process-gpu --disable-gpu-sandbox --disable-software-rasterizer --single-process"
         }
         Write-Host "  [INFO] Launch command: $($exePath) $($psi.Arguments)"
 
