@@ -228,8 +228,10 @@ function Invoke-RuntimeSmoke {
         # in app.ts is too late for headless Windows CI). Scoped behind the
         # BABY_MENU_DISABLE_GPU env var so production installs are unaffected.
         #
-        # Diagnostic: prove Node.js runs inside the Electron binary before the
-        # asar is loaded. If this works, the crash is in the asar / our module.
+        # Diagnostic: prove Node.js runs inside the Electron binary (without
+        # Chromium flags since ELECTRON_RUN_AS_NODE forwards all remaining
+        # argv to Node.js, and Node.js rejects unrecognized -- flags as
+        # invalid argument errors - exit code 9).
         try {
             $jsTestPsi = New-Object System.Diagnostics.ProcessStartInfo
             $jsTestPsi.FileName = $exePath
@@ -237,7 +239,8 @@ function Invoke-RuntimeSmoke {
             $jsTestPsi.RedirectStandardOutput = $true
             $jsTestPsi.RedirectStandardError = $true
             $jsTestPsi.CreateNoWindow = $true
-            $jsTestPsi.Arguments = "--no-sandbox --disable-gpu --in-process-gpu --disable-gpu-sandbox --disable-software-rasterizer -e console.log('node_ok');process.exit(0)"
+            # No -- flags here - they leak to Node.js under ELECTRON_RUN_AS_NODE
+            $jsTestPsi.Arguments = "-e console.log('node_ok');process.exit(0)"
             $jsTestPsi.EnvironmentVariables.Clear()
             $jsTestPsi.EnvironmentVariables["ELECTRON_RUN_AS_NODE"] = "1"
             $jsTestPsi.EnvironmentVariables["TEMP"] = $isolatedTemp
