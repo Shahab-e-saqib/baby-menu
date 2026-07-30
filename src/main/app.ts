@@ -44,15 +44,15 @@ if (!windowsAdapterLaunchRequest && process.platform === "darwin") {
   app.commandLine.appendSwitch("use-mock-keychain");
 }
 
-// Narrow GPU fallback for the MAIN packaged app process: headless Windows CI
-// (Windows Server 2025, no GPU driver) crashes Chromium's GPU subprocess init
-// with STATUS_BREAKPOINT. Two triggers: UNC path launches (e.g. WSL
-// \\wsl.localhost\...), or the explicit BABY_MENU_DISABLE_GPU env var (set in
-// the packaged-runtime smoke test). Native local-drive installs keep full GPU
-// acceleration and the GPU sandbox; the Electron-as-Node adapter launcher has
-// its own equivalent handling. The switches must be appended before
-// app.whenReady() (i.e. before Chromium starts).
-if (!windowsAdapterLaunchRequest && (isUncWindowsLaunch() || process.env.BABY_MENU_DISABLE_GPU === "1")) {
+// Narrow GPU fallback for the MAIN packaged app process when launched from a
+// UNC path (e.g. a WSL \\wsl.localhost\... network share): Chromium's sandboxed
+// GPU subprocess cannot launch from a network share, which crashes the app at
+// startup in a fatal GPU-init loop (gpu_data_manager_impl_private.cc:417
+// "GPU process isn't usable. Goodbye."). This is scoped to UNC launches only, so
+// native local-drive installs keep full GPU acceleration and the GPU sandbox;
+// the Electron-as-Node adapter launcher has its own equivalent handling. The
+// switches must be appended before app.whenReady() (i.e. before Chromium starts).
+if (!windowsAdapterLaunchRequest && isUncWindowsLaunch()) {
   app.disableHardwareAcceleration();
   app.commandLine.appendSwitch("in-process-gpu");
   app.commandLine.appendSwitch("disable-gpu");
@@ -72,26 +72,17 @@ if (!windowsAdapterLaunchRequest) {
   registerBabyMenuProtocolSchemes();
 }
 
+// Windows application identity must be set before app.whenReady() so the
+// taskbar groups the running instance under the correct AppUserModelID.
+if (!windowsAdapterLaunchRequest && process.platform === "win32") {
+  app.setAppUserModelId("com.kunchenguid.baby-menu");
+}
+
 // Single-instance lock: only the first process creates the tray, popover,
 // runtime, and background services. A second process quits immediately.
 let isPrimaryInstance = true;
 if (!windowsAdapterLaunchRequest) {
-  // Set Windows AppUserModelID for taskbar grouping before the lock so
-  // Electron derives the lock scope from the correct identity.
-  if (process.platform === "win32") {
-    app.setAppUserModelId("com.kunchenguid.baby-menu");
-  }
-
-  // On Windows CI (Windows Server 2025 / Electron 42)
-  // requestSingleInstanceLock can return false even for a fresh packaged
-  // launch because the named-pipe scope collides with the AppUserModelID
-  // set above or a prior build artifact.  The env var lets the
-  // packaged-runtime smoke test bypass the lock and prove the app starts
-  // and stays alive for 20 s with an isolated profile.  The lock behavior
-  // itself has dedicated unit-test coverage.
-  const skipLock = process.env.BABY_MENU_SKIP_SINGLE_INSTANCE_LOCK === "1";
-
-  isPrimaryInstance = skipLock || app.requestSingleInstanceLock();
+  isPrimaryInstance = app.requestSingleInstanceLock();
   if (isPrimaryInstance) {
     app.on("second-instance", () => {
       if (popoverWindow && !popoverWindow.isDestroyed()) {

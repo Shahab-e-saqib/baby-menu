@@ -174,7 +174,6 @@ function Invoke-RuntimeSmoke {
     $evidenceParts = @()
     $launchedPid = $null
     $procLaunched = $false
-    $nodeFunctionalPassed = $false
 
     # Initialize $savedEnv before try so finally always has a valid reference
     $savedEnv = @{}
@@ -222,51 +221,6 @@ function Invoke-RuntimeSmoke {
         $psi.CreateNoWindow = $true
         $psi.WorkingDirectory = $unpackedCanon
 
-        # Headless Windows CI (Windows Server 2025, no GPU driver) crashes
-        # Chromium's GPU init with STATUS_BREAKPOINT. Pass GPU/sandbox
-        # switches as CLI args so Electron/Chromium sees them at the C++
-        # level before any JS module evaluation (app.disableHardwareAcceleration
-        # in app.ts is too late for headless Windows CI). Scoped behind the
-        # BABY_MENU_DISABLE_GPU env var so production installs are unaffected.
-        #
-        # Diagnostic: prove Node.js runs inside the Electron binary (without
-        # Chromium flags since ELECTRON_RUN_AS_NODE forwards all remaining
-        # argv to Node.js, and Node.js rejects unrecognized -- flags as
-        # invalid argument errors - exit code 9).
-        try {
-            $jsTestPsi = New-Object System.Diagnostics.ProcessStartInfo
-            $jsTestPsi.FileName = $exePath
-            $jsTestPsi.UseShellExecute = $false
-            $jsTestPsi.RedirectStandardOutput = $true
-            $jsTestPsi.RedirectStandardError = $true
-            $jsTestPsi.CreateNoWindow = $true
-            # No -- flags here - they leak to Node.js under ELECTRON_RUN_AS_NODE
-            # Test 1: simple Node.js eval
-            $jsTestPsi.Arguments = "-e console.log('node_ok');process.exit(0)"
-            $jsTestPsi.EnvironmentVariables.Clear()
-            $jsTestPsi.EnvironmentVariables["ELECTRON_RUN_AS_NODE"] = "1"
-            $jsTestPsi.EnvironmentVariables["TEMP"] = $isolatedTemp
-            $jsTestPsi.EnvironmentVariables["TMP"] = $isolatedTemp
-            $jsTestPsi.EnvironmentVariables["SYSTEMROOT"] = $env:SYSTEMROOT
-            $jsTestProc = [System.Diagnostics.Process]::Start($jsTestPsi)
-            if ($jsTestProc.WaitForExit(15000)) {
-                $jsOut = $jsTestProc.StandardOutput.ReadToEnd().Trim()
-                $jsCode = $jsTestProc.ExitCode
-                if ($jsCode -eq 0 -and $jsOut -eq 'node_ok') {
-                    Add-CheckResult -Name 'electron-node-functional' -Status 'pass' -Detail "Node.js in Electron binary works"
-                    $nodeFunctionalPassed = $true
-                } else {
-                    Add-CheckResult -Name 'electron-node-functional' -Status 'fail' -Detail "exitCode=$jsCode stdout=${jsOut}"
-                }
-            } else {
-                Add-CheckResult -Name 'electron-node-functional' -Status 'fail' -Detail "timed out"
-            }
-        } catch {
-            Add-CheckResult -Name 'electron-node-functional' -Status 'fail' -Detail "threw: $_"
-        }
-
-        Write-Host "  [INFO] Launch command: $($exePath)"
-
         # Minimal env allowlist — never inherit CI secrets (GITHUB_, ACTIONS_, etc.)
         $psi.EnvironmentVariables.Clear()
         $psi.EnvironmentVariables["APPDATA"] = $isolatedDirs['APPDATA']
@@ -278,8 +232,6 @@ function Invoke-RuntimeSmoke {
         $psi.EnvironmentVariables["SYSTEMROOT"] = $env:SYSTEMROOT
         if ($env:PATHEXT) { $psi.EnvironmentVariables["PATHEXT"] = $env:PATHEXT }
         if ($env:PATH) { $psi.EnvironmentVariables["PATH"] = $env:PATH }
-        if ($env:BABY_MENU_SKIP_SINGLE_INSTANCE_LOCK) { $psi.EnvironmentVariables["BABY_MENU_SKIP_SINGLE_INSTANCE_LOCK"] = $env:BABY_MENU_SKIP_SINGLE_INSTANCE_LOCK }
-        if ($env:BABY_MENU_DISABLE_GPU) { $psi.EnvironmentVariables["BABY_MENU_DISABLE_GPU"] = $env:BABY_MENU_DISABLE_GPU }
 
         $proc = [System.Diagnostics.Process]::Start($psi)
         $launchedPid = $proc.Id
@@ -309,17 +261,7 @@ function Invoke-RuntimeSmoke {
         } else {
             $proc.WaitForExit(2000) | Out-Null
             if ($proc.HasExited) { $diagnostics.exitCode = $proc.ExitCode }
-            # Headless Windows CI (Windows Server 2025) crashes Chromium content
-            # init with STATUS_BREAKPOINT.
-            # This is a CI environment limitation - the binary and Node.js work
-            # correctly (verified by electron-node-functional). Accept the exit code
-            # when running under the BABY_MENU_DISABLE_GPU env var (set only in CI).
-            $isKnownCiCrash = $nodeFunctionalPassed -and $env:BABY_MENU_DISABLE_GPU -eq "1" -and $diagnostics.exitCode -eq -2147483645
-            if ($isKnownCiCrash) {
-                Add-CheckResult -Name 'runtime-persistence' -Status 'pass' -Detail "PID $launchedPid exited with STATUS_BREAKPOINT (known headless Windows CI limitation, exit code $($diagnostics.exitCode))"
-            } else {
-                Add-CheckResult -Name 'runtime-persistence' -Status 'fail' -Detail "PID $launchedPid exited before deadline (exit code $($diagnostics.exitCode))"
-            }
+            Add-CheckResult -Name 'runtime-persistence' -Status 'fail' -Detail "PID $launchedPid exited before deadline (exit code $($diagnostics.exitCode))"
         }
 
         # ---- Controlled kill ----
