@@ -176,3 +176,22 @@ Evidence JSON (pass/fail/skip with secret redaction) is written under `<InstallD
 - Keep/Undo bar interaction
 
 The contract `tests/windows-native-validation.test.ts` validates the runner's structure, guards, and required check domains without executing the script.
+
+## Packaged runtime persistence smoke
+
+A focused PowerShell runner at `scripts/Verify-BabyMenuRuntimeSmoke.ps1` validates the packaged app's runtime persistence without requiring the NSIS installer. It runs against the `win-unpacked` electron-builder dir output on the Windows CI runner.
+
+**Scope (automated, single primary launch):**
+1. Create fresh temp roots for APPDATA/LOCALAPPDATA/USERPROFILE/HOME, isolated from the true user profile.
+2. Prove no Baby Menu process is already running from the unpacked directory.
+3. Launch the app exactly once via `ProcessStartInfo` with `UseShellExecute=false`, redirected stdout/stderr, isolated env.
+4. Poll for 20 seconds, snapshot alive-at-deadline.
+5. If alive: record persistence pass, then controlled `taskkill /T /F /PID` cleanup.
+6. If exited early: capture exit code, parse stdout/stderr for the `second-instance-rejected` JSON marker (safe evidence with SHA-256 digests, never raw env/credentials).
+7. Best-effort CIM-based survivor sweep proves no descendant processes survive under the unpacked directory.
+8. Environment restoration verified after `finally` block.
+9. Structured failure evidence JSON written to runner temp, uploaded as a 1-day-retention artifact only on failure.
+
+**Secondary instance behavior** (second launch exits cleanly without STATUS_BREAKPOINT) is covered by unit test in `tests/app-lifecycle-windows.test.ts`, not by a second packaged launch.
+
+**Contract test:** `tests/windows-runtime-smoke-contract.test.ts` validates the runner's structure, parameters, PS5.1 compatibility, security patterns, isolation logic, and evidence format.

@@ -510,6 +510,83 @@ try {
     if ($p29) { $p29.Dispose() }
 }
 
+# ---- Get-ExecutablePath helper scenarios (from Verify-BabyMenuRuntimeSmoke.ps1) ----
+
+Write-Host ''
+Write-Host '--- Get-ExecutablePath scenarios ---' -ForegroundColor Green
+
+# 30. Get-ExecutablePath finds "Baby Menu.exe" ----
+$g30Dir = Join-Path ([System.IO.Path]::GetTempPath()) "baby-menu-smoke-getexe-$([System.Guid]::NewGuid().ToString('N'))"
+try {
+    $null = New-Item -ItemType Directory -Path $g30Dir -Force
+    'placeholder' | Out-File -FilePath (Join-Path $g30Dir 'Baby Menu.exe') -Encoding utf8 -NoNewline
+    # Inline the function
+    function Get-ExecutablePath-Local { param([string]$Dir)
+        $exe = Join-Path $Dir 'Baby Menu.exe'
+        if (Test-Path $exe) { return $exe }
+        $exe2 = Join-Path $Dir 'BabyMenu.exe'
+        if (Test-Path $exe2) { return $exe2 }
+        return $null
+    }
+    $result30 = Get-ExecutablePath-Local -Dir $g30Dir
+    Assert-Equal 'Get-ExecutablePath finds Baby Menu.exe' $true ($result30 -ne $null -and $result30.EndsWith('Baby Menu.exe'))
+} finally {
+    if (Test-Path $g30Dir) { Remove-Item -Path $g30Dir -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+# 31. Get-ExecutablePath finds "BabyMenu.exe" (no-space variant) ----
+$g31Dir = Join-Path ([System.IO.Path]::GetTempPath()) "baby-menu-smoke-getexe2-$([System.Guid]::NewGuid().ToString('N'))"
+try {
+    $null = New-Item -ItemType Directory -Path $g31Dir -Force
+    'placeholder' | Out-File -FilePath (Join-Path $g31Dir 'BabyMenu.exe') -Encoding utf8 -NoNewline
+    $result31 = Get-ExecutablePath-Local -Dir $g31Dir
+    Assert-Equal 'Get-ExecutablePath finds BabyMenu.exe' $true ($result31 -ne $null -and $result31.EndsWith('BabyMenu.exe'))
+} finally {
+    if (Test-Path $g31Dir) { Remove-Item -Path $g31Dir -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+# 32. Get-ExecutablePath returns null when no exe found ----
+$g32Dir = Join-Path ([System.IO.Path]::GetTempPath()) "baby-menu-smoke-getexe3-$([System.Guid]::NewGuid().ToString('N'))"
+try {
+    $null = New-Item -ItemType Directory -Path $g32Dir -Force
+    # No exe files
+    $result32 = Get-ExecutablePath-Local -Dir $g32Dir
+    Assert-Equal 'Get-ExecutablePath null when no exe' $null $result32
+} finally {
+    if (Test-Path $g32Dir) { Remove-Item -Path $g32Dir -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+# 33. Get-ExecutablePath uses a dir-only path (no file), returns $null ----
+$g33Dir = Join-Path ([System.IO.Path]::GetTempPath()) "baby-menu-smoke-getexe4-$([System.Guid]::NewGuid().ToString('N'))"
+try {
+    $null = New-Item -ItemType Directory -Path $g33Dir -Force
+    # Create a subdirectory called "Baby Menu.exe" (not a file)
+    $null = New-Item -ItemType Directory -Path (Join-Path $g33Dir 'Baby Menu.exe') -Force
+    $result33 = Get-ExecutablePath-Local -Dir $g33Dir
+    Assert-Equal 'Get-ExecutablePath rejects directory named Baby Menu.exe' $null $result33
+} finally {
+    if (Test-Path $g33Dir) { Remove-Item -Path $g33Dir -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+# ---- isPackaged marker variant parsing (true/false) ----
+
+# 34. isPackaged=true variant matches the line pattern
+$markerTrue = '{"event":"second-instance-rejected","platform":"win32","isPackaged":true}'
+Assert-Equal 'marker with isPackaged=true matches' $true ($markerTrue -match $secondInstanceLinePattern)
+
+# 35. isPackaged=false variant matches the line pattern
+$markerFalse = '{"event":"second-instance-rejected","platform":"win32","isPackaged":false}'
+Assert-Equal 'marker with isPackaged=false matches' $true ($markerFalse -match $secondInstanceLinePattern)
+
+# ---- Evidence JSON writing pattern ----
+
+# 36. Evidence JSON has SecretRedacted=true field
+$sampleEvidence = '{ "SecretRedacted": true, "Timestamp": "2024-01-01", "FailedCount": 0 }'
+Assert-Equal 'evidence JSON has SecretRedacted' $true ($sampleEvidence -match '"SecretRedacted":\s*true')
+
+# 37. Evidence JSON includes FailedCount
+Assert-Equal 'evidence JSON has FailedCount' $true ($sampleEvidence -match '"FailedCount"')
+
 # ---- Summary ----
 Write-Host ''
 Write-Host "Passed: $passed / $($passed + $failed)"

@@ -110,11 +110,37 @@ jobs:
           pnpm vitest run tests/preferences.test.ts tests/telemetry.test.ts tests/notifier.test.ts tests/update-checker.test.ts tests/background-task-scheduler.test.ts tests/ipc-capabilities.test.ts tests/contracts-types.test.ts tests/design-system-styles.test.ts tests/design-type-scale.test.ts tests/windows-unc-runtime.test.ts
 
       - name: Package Windows app and verify native runtime
+        id: package
         shell: pwsh
         run: |
           pnpm exec electron-builder --win dir --x64 --config electron-builder.yml --publish never
-          $env:BABY_MENU_WINDOWS_PACKAGE_DIR = (Resolve-Path "release/win-unpacked").Path
+          $packageDir = (Resolve-Path "release/win-unpacked").Path
+          echo "dir=$packageDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          echo "BABY_MENU_WINDOWS_PACKAGE_DIR=$packageDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          $env:BABY_MENU_WINDOWS_PACKAGE_DIR = $packageDir
           pnpm vitest run tests/windows-packaging.test.ts
+
+      - name: Packaged runtime persistence smoke
+        id: runtime-smoke
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $diagDir = Join-Path $env:RUNNER_TEMP "baby-menu-runtime-smoke-diag"
+          & "${{ github.workspace }}\scripts\Verify-BabyMenuRuntimeSmoke.ps1" -UnpackedDir "${{ steps.package.outputs.dir }}" -DiagnosticDir $diagDir
+
+      - name: Upload runtime smoke diagnostic evidence
+        if: steps.runtime-smoke.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: baby-menu-windows-runtime-smoke-evidence
+          path: ${{ runner.temp }}\baby-menu-runtime-smoke-diag\*.json
+          retention-days: 1
+          if-no-files-found: warn
+
+      - name: Fail job on runtime smoke failure
+        if: steps.runtime-smoke.outcome == 'failure'
+        shell: pwsh
+        run: exit 1
 
       - name: Build x64 NSIS unsigned installer
         shell: pwsh
