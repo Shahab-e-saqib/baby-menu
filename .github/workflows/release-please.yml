@@ -67,6 +67,9 @@ jobs:
       - name: Ad-hoc sign app
         run: codesign --force --deep --sign - "release/mac-universal/Baby Menu.app"
 
+      - name: Verify packaged runtime
+        run: pnpm test:e2e:packaged-mac -- "release/mac-universal/Baby Menu.app"
+
       - name: Create DMG
         run: |
           DMG_NAME="Baby-Menu-${VERSION}-universal.dmg"
@@ -85,6 +88,11 @@ jobs:
         run: |
           SHA256=$(shasum -a 256 "$DMG_PATH" | awk '{print $1}')
           echo "SHA256=${SHA256}" >> "$GITHUB_ENV"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$TAG_NAME" --draft=false
 
       - name: Update Homebrew Cask
         env:

@@ -358,6 +358,20 @@ describe("startBabyMenuApp", () => {
     expect(electronApp.setLoginItemSettings).toHaveBeenCalledWith({ openAtLogin: true });
   });
 
+  it("recognizes production package executables on macOS and Windows", async () => {
+    const { isProductionPackageExecutable } = await import("../src/main/app");
+
+    expect(
+      isProductionPackageExecutable("/Applications/Baby Menu.app/Contents/MacOS/Baby Menu", "darwin"),
+    ).toBe(true);
+    expect(isProductionPackageExecutable("C:\\Program Files\\Baby Menu\\Baby Menu.exe", "win32")).toBe(
+      true,
+    );
+    expect(
+      isProductionPackageExecutable("C:\\Program Files\\Baby Menu Dev\\Baby Menu Dev.exe", "win32"),
+    ).toBe(false);
+  });
+
   it("temporarily uses regular activation policy while the macOS popover is visible", async () => {
     Object.defineProperty(process, "platform", {
       configurable: true,

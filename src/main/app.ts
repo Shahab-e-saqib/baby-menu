@@ -35,6 +35,15 @@ import {
 import { createLayoutModuleRegistry, createWidgetModuleRegistry } from "./widget-module-registry";
 import { registerBabyMenuProtocolHandlers, registerBabyMenuProtocolSchemes } from "./widget-protocol";
 
+export function isProductionPackageExecutable(
+  executablePath: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return platform === "win32"
+    ? win32.basename(executablePath) === "Baby Menu.exe"
+    : basename(executablePath) === "Baby Menu";
+}
+
 const windowsAdapterLaunchRequest = parseWindowsAdapterLaunchRequest();
 
 if (windowsAdapterLaunchRequest) {
@@ -279,8 +288,7 @@ export async function startBabyMenuApp(): Promise<void> {
     app.dock?.hide();
   }
 
-  // Local Baby Menu Dev bundles must never mutate the user's login items.
-  const allowOpenAtLogin = paths.isPackaged && basename(app.getPath("exe")) === "Baby Menu";
+  const allowOpenAtLogin = paths.isPackaged && isProductionPackageExecutable(app.getPath("exe"));
   const preferences = createPreferencesService({
     userDataDir: paths.appDataRoot,
     app,
