@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { windowsPathToWsl } from "../src/main/wsl-cli";
+import { describe, expect, it, vi } from "vitest";
+import { validateWslLaunch, windowsPathToWsl } from "../src/main/wsl-cli";
 import { resolveDriverSpawn } from "../src/adapters/shared/platform-spawn";
 
 describe("WSL CLI bridge boundaries", () => {
@@ -16,6 +16,26 @@ describe("WSL CLI bridge boundaries", () => {
 
   it("rejects UNC paths instead of guessing a WSL mapping", () => {
     expect(windowsPathToWsl("\\\\server\\share\\workspace")).toBeNull();
+  });
+
+  it("validates workspace access before probing the provider", () => {
+    const run = vi.fn()
+      .mockReturnValueOnce({ status: 0, stdout: "Ubuntu\n" })
+      .mockReturnValueOnce({ status: 1, stdout: "" });
+
+    expect(validateWslLaunch("Ubuntu", "codex", "C:\\Work\\baby-menu", run)).toContain("cannot access this workspace");
+    expect(run).toHaveBeenNthCalledWith(2, ["--distribution", "Ubuntu", "--cd", "/mnt/c/Work/baby-menu", "--exec", "true"]);
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("probes the provider from the validated workspace", () => {
+    const run = vi.fn()
+      .mockReturnValueOnce({ status: 0, stdout: "Ubuntu\n" })
+      .mockReturnValueOnce({ status: 0, stdout: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "/usr/bin/claude\n" });
+
+    expect(validateWslLaunch("Ubuntu", "claude", "D:\\workspace", run)).toBeNull();
+    expect(run).toHaveBeenNthCalledWith(3, ["--distribution", "Ubuntu", "--cd", "/mnt/d/workspace", "--exec", "which", "claude"]);
   });
 
   it("keeps hostile distribution names as an argument boundary", () => {

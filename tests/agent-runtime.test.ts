@@ -68,6 +68,15 @@ describe("agent runtime defaults", () => {
     );
   });
 
+  it("does not apply native availability to an explicit WSL selection", async () => {
+    const runtime = new BabyMenuAgentRuntime("/repo", {
+      agentName: "claude",
+      agentAvailability: { claude: false },
+      executionMode: "wsl",
+    });
+    await expect(runtime.send("hello")).rejects.toThrow("WSL mode is available on Windows only");
+  });
+
   it("honors BABY_MENU_AGENT before auto-detecting local agents", () => {
     expect(
       resolveDefaultAgentName({

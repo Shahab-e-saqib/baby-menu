@@ -464,7 +464,7 @@ export class BabyMenuAgentRuntime {
 
   private async runSend(prompt: string, options: BabyMenuAgentRuntimeSendOptions = {}): Promise<AgentChatResult> {
     const availability = this.agentAvailability?.[this.agentName];
-    if (availability === false) {
+    if (this.executionMode === "native" && availability === false) {
       const label = this.agentName === "codex" ? "Codex" : this.agentName === "claude" ? "Claude Code" : this.agentName;
       const cli = this.agentName === "codex" ? "Codex" : "Claude Code";
       throw new AgentTurnFailedError({
@@ -474,7 +474,6 @@ export class BabyMenuAgentRuntime {
         retryable: false,
       });
     }
-    const agentCwd = await this.ensureAgentRuntimeCwd();
     if (this.executionMode === "wsl") {
       if (process.platform !== "win32") {
         throw new AgentTurnFailedError({ code: "CLI_START_FAILED", detailCode: "WSL_UNAVAILABLE", message: "WSL mode is available on Windows only. Switch this agent to Native mode." });
@@ -482,6 +481,9 @@ export class BabyMenuAgentRuntime {
       if (this.agentName !== "claude" && this.agentName !== "codex") {
         throw new AgentTurnFailedError({ code: "CLI_START_FAILED", detailCode: "WSL_UNAVAILABLE", message: "WSL mode is supported only for Claude Code and Codex. Switch this agent to Native mode." });
       }
+    }
+    const agentCwd = await this.ensureAgentRuntimeCwd();
+    if (this.executionMode === "wsl") {
       const { validateWslLaunch } = await import("./wsl-cli");
       const reason = validateWslLaunch(this.wslDistribution, this.agentName, agentCwd);
       if (reason) throw new AgentTurnFailedError({ code: "CLI_START_FAILED", detailCode: "WSL_UNAVAILABLE", message: reason });

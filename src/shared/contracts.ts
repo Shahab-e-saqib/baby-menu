@@ -89,9 +89,10 @@ export type BabyMenuSettings = {
   agentName: string;
   /** Present when the current runtime state prevents switching agents. */
   agentSwitchDisabledReason?: string;
-  /** Selectable agents; unavailable ones are shown disabled with an install hint. */
+  /** Selectable agents; native-unavailable ones include an install hint. */
   agents: BabyMenuAgentOption[];
   agentModes?: Record<string, AgentExecutionMode>;
+  wslSupported?: boolean;
   wslDistribution?: string;
   wslDistributions?: string[];
 };

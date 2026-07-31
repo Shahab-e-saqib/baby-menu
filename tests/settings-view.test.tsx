@@ -43,6 +43,10 @@ function installBabyMenuApi(settings?: Partial<BabyMenuSettings>): BabyMenuApi {
         current = { ...current, agentName };
         return current;
       }),
+      setAgentMode: vi.fn(async (agentName: string, mode: "native" | "wsl") => {
+        current = { ...current, agentModes: { ...current.agentModes, [agentName]: mode } };
+        return current;
+      }),
       addAgent: vi.fn(async (input: BabyMenuCustomAgentInput) => {
         current = {
           ...current,
@@ -142,6 +146,40 @@ describe("settings view", () => {
     const codex = await screen.findByRole("radio", { name: /Codex/ });
     expect((codex as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText("Install the Codex CLI.")).toBeTruthy();
+  });
+
+  it("allows an unavailable built-in to be selected through explicit WSL mode", async () => {
+    const api = installBabyMenuApi({
+      agentName: "claude",
+      wslSupported: true,
+      agentModes: { codex: "native" },
+      agents: [
+        { name: "claude", label: "Claude Code", available: true },
+        { name: "codex", label: "Codex", available: false, installHint: "Install the Codex CLI." },
+      ],
+    });
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "open settings" }));
+
+    fireEvent.change(await screen.findByLabelText("Codex execution mode"), { target: { value: "wsl" } });
+    await waitFor(() => expect(api.settings.setAgentMode).toHaveBeenCalledWith("codex", "wsl"));
+    expect((screen.getByRole("radio", { name: /Codex/ }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText("Install the Codex CLI.")).toBeNull();
+  });
+
+  it("hides WSL mode outside supported built-in Windows agents", async () => {
+    installBabyMenuApi({
+      wslSupported: false,
+      agents: [
+        { name: "claude", label: "Claude Code", available: true },
+        { name: "gemini", label: "Gemini", available: true, custom: true, command: "gemini acp" },
+      ],
+    });
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "open settings" }));
+
+    expect(screen.queryByLabelText("Claude Code execution mode")).toBeNull();
+    expect(screen.queryByLabelText("Gemini execution mode")).toBeNull();
   });
 
   it("confirms before switching agents and calls setAgent on confirm", async () => {

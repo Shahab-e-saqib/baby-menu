@@ -31,6 +31,7 @@ export function SettingsView({ sections, runtimeImporter }: SettingsViewProps = 
   const [agents, setAgents] = useState<BabyMenuAgentOption[]>([]);
   const [agentName, setAgentName] = useState("");
   const [agentModes, setAgentModes] = useState<Record<string, "native" | "wsl">>({});
+  const [wslSupported, setWslSupported] = useState(false);
   const [wslDistribution, setWslDistribution] = useState("Ubuntu");
   const [wslDistributions, setWslDistributions] = useState<string[]>([]);
   const [agentSwitchDisabledReason, setAgentSwitchDisabledReason] = useState<string | undefined>();
@@ -50,6 +51,7 @@ export function SettingsView({ sections, runtimeImporter }: SettingsViewProps = 
       setAgents(settings.agents);
       setAgentName(settings.agentName);
       setAgentModes(settings.agentModes ?? {});
+      setWslSupported(settings.wslSupported ?? false);
       setWslDistribution(settings.wslDistribution ?? "Ubuntu");
       setWslDistributions(settings.wslDistributions ?? []);
       setAgentSwitchDisabledReason(settings.agentSwitchDisabledReason);
@@ -69,6 +71,7 @@ export function SettingsView({ sections, runtimeImporter }: SettingsViewProps = 
     setAgentName(result.agentName);
     setAgents(result.agents);
     setAgentModes(result.agentModes ?? {});
+    setWslSupported(result.wslSupported ?? false);
     setWslDistribution(result.wslDistribution ?? "Ubuntu");
     setWslDistributions(result.wslDistributions ?? []);
     setAgentSwitchDisabledReason(result.agentSwitchDisabledReason);
@@ -140,45 +143,50 @@ export function SettingsView({ sections, runtimeImporter }: SettingsViewProps = 
         {agents.map((agent) => {
           const active = agent.name === agentName;
           const switchBlocked = Boolean(agentSwitchDisabledReason && !active);
+          const executionMode = agentModes[agent.name] ?? "native";
+          const supportsWsl = wslSupported && !agent.custom && (agent.name === "claude" || agent.name === "codex");
+          const selectable = agent.available || (supportsWsl && executionMode === "wsl");
           return (
             <div key={agent.name} className="flex items-center gap-1.5">
               <button
                 type="button"
                 role="radio"
                 aria-checked={active}
-                disabled={!agent.available || active || switchBlocked}
+                disabled={!selectable || active || switchBlocked}
                 onClick={() => setPendingAgent(agent)}
                 className={cn(
                   "flex flex-1 items-center justify-between gap-3 rounded-sm border px-3 py-2 text-left outline-none transition-colors",
                   active ? "border-signal-live bg-elevated" : "border-line hover:bg-pressed",
-                  !agent.available && "cursor-not-allowed opacity-50 hover:bg-transparent",
+                  !selectable && "cursor-not-allowed opacity-50 hover:bg-transparent",
                 )}
               >
                 <span className="flex flex-col gap-0.5">
                   <span className="text-sm text-ink">{agent.label}</span>
-                  {!agent.available && agent.installHint ? (
+                  {!agent.available && executionMode === "native" && agent.installHint ? (
                     <span className="text-xs text-ink-soft">{agent.installHint}</span>
                   ) : null}
-                  {agent.available && switchBlocked ? <span className="text-xs text-ink-soft">{agentSwitchDisabledReason}</span> : null}
+                  {selectable && switchBlocked ? <span className="text-xs text-ink-soft">{agentSwitchDisabledReason}</span> : null}
                 </span>
                 {active ? <StatusDot tone="live" /> : null}
               </button>
-              <select
-                aria-label={`${agent.label} execution mode`}
-                value={agentModes[agent.name] ?? "native"}
-                disabled={switchBlocked}
-                onChange={(event) => {
-                  const mode = event.target.value as "native" | "wsl";
-                  void (async () => {
-                    const result = await window.babyMenu?.settings.setAgentMode?.(agent.name, mode);
-                    if (result) applySettings(result);
-                  })();
-                }}
-                className="rounded-sm border border-line bg-canvas px-1.5 py-1 text-xs text-ink-soft"
-              >
-                <option value="native">Native</option>
-                <option value="wsl">WSL ({wslDistribution})</option>
-              </select>
+              {supportsWsl ? (
+                <select
+                  aria-label={`${agent.label} execution mode`}
+                  value={executionMode}
+                  disabled={switchBlocked}
+                  onChange={(event) => {
+                    const mode = event.target.value as "native" | "wsl";
+                    void (async () => {
+                      const result = await window.babyMenu?.settings.setAgentMode?.(agent.name, mode);
+                      if (result) applySettings(result);
+                    })();
+                  }}
+                  className="rounded-sm border border-line bg-canvas px-1.5 py-1 text-xs text-ink-soft"
+                >
+                  <option value="native">Native</option>
+                  <option value="wsl">WSL ({wslDistribution})</option>
+                </select>
+              ) : null}
               {agent.custom ? (
                 <>
                   <Button

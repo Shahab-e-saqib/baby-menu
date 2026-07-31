@@ -340,6 +340,7 @@ export async function startBabyMenuApp(): Promise<void> {
       agentSwitchDisabledReason: agentRuntime.agentSwitchDisabledReason,
       agents: agentCatalog.options(),
       agentModes: current.agentModes ?? {},
+      wslSupported: process.platform === "win32",
       wslDistribution: current.wslDistribution ?? "Ubuntu",
       wslDistributions: wslProbe?.ok ? wslProbe.distributions : [],
     };
@@ -365,8 +366,8 @@ export async function startBabyMenuApp(): Promise<void> {
     },
     async setWslDistribution(distribution: string) {
       const current = await preferences.get();
-      await preferences.setWslDistribution(distribution);
       if ((current.agentModes?.[agentRuntime.currentAgent] ?? "native") === "wsl") await agentRuntime.setExecutionMode("wsl", distribution);
+      await preferences.setWslDistribution(distribution);
       return buildSettings();
     },
     async addAgent(input: BabyMenuCustomAgentInput) {
