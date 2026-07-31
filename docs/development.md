@@ -26,7 +26,7 @@ Requires Node `>=22.12` and `pnpm@11.1.1` (declared in `packageManager`).
 | `pnpm dist:mac` | Build the local `Baby Menu Dev.app` and create a universal DMG in `release/` |
 | `pnpm test` | Run all Vitest tests |
 | `pnpm test:e2e` | Only e2e tests (including `acpx/runtime` plus bundled adapter coverage) |
-| `pnpm test:e2e:packaged-mac` | Check that a packaged macOS app starts its renderer and preload bridge |
+| `pnpm test:e2e:packaged-mac` | Verify a packaged macOS app's renderer, preload bridge, and ACP runtime without packaged esbuild |
 | `pnpm typecheck` | `tsc --noEmit` |
 | `pnpm lint` | `tsc --noEmit` (same as typecheck) |
 
@@ -41,9 +41,9 @@ Single test: `pnpm vitest run tests/<name>.test.ts` or `pnpm vitest run -t "<pat
 
 ## Packaging
 
-- `pnpm package:mac` tests the actual packaged app from `release/mac-universal/Baby Menu Dev.app`.
-- Local packaging uses the `Baby Menu Dev` product name and `com.kunchenguid.baby-menu.dev` bundle id so local builds do not shadow the released `/Applications/Baby Menu.app` in macOS LaunchServices. It explicitly disables Developer ID discovery and notarization, then applies an ad-hoc signature for local launch only.
-- See [CONTRIBUTING.md](../CONTRIBUTING.md#release-notes) for the unsigned production release procedure.
+- `pnpm package:mac` creates the actual packaged app at `release/mac-universal/Baby Menu Dev.app`; run `pnpm test:e2e:packaged-mac` afterward to exercise it.
+- Local packaging uses the `Baby Menu Dev` product name and `com.kunchenguid.baby-menu.dev` bundle id so local builds do not shadow the released `/Applications/Baby Menu.app` in macOS LaunchServices. It explicitly disables Developer ID discovery and notarization, then applies an ad-hoc signature for local launch only; that credential-free signature does not establish public trust.
+- See [CONTRIBUTING.md](../CONTRIBUTING.md#release-notes) for the credential-free production release procedure.
 - The universal package must run on both Intel and Apple Silicon Macs, so packaged runtime native prebuilt dependencies must stay installed for `x64` and `arm64` and stay covered by `electron-builder.yml` `x64ArchFiles` when new native packages are added.
 - `esbuild` is build-time-only and must stay excluded from `electron-builder.yml`. It enters the production dependency graph only through `acpx -> tsx -> esbuild`, but Baby Menu imports the separately published `acpx/runtime` entry, which does not reference `tsx` or acpx's CLI chunk. The adapters are pre-bundled before packaging, while runtime extension compilation uses the shipped `typescript` dependency. `tests/acpx-runtime-dependencies.test.ts` locks the acpx entry-point boundary, and the packaged runtime E2E verifies a real ACP turn with neither `esbuild` nor `@esbuild` present in the app.
 - Keep `electron-builder` at `26.8.2` or newer so pnpm-deduped dependencies are included correctly in packaged builds.

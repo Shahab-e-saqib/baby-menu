@@ -47,7 +47,7 @@ Baby Menu releases are proposed by release-please after conventional commits lan
 Use prefixes such as `feat:` and `fix:` so release-please can choose the version bump and release notes.
 Mark breaking changes with `!` in the commit type or a `BREAKING CHANGE:` footer.
 Merging the release-please PR creates the version tag and a draft GitHub Release.
-The release-please workflow builds the universal macOS app, applies an ad-hoc signature, verifies the packaged runtime, uploads the DMG, publishes the release, and then updates `kunchenguid/homebrew-tap` with the release checksum.
+The release-please workflow builds the universal macOS app, applies a credential-free ad-hoc signature (not a Developer ID signature or notarization), verifies the packaged runtime, uploads the DMG, publishes the release, and then updates `kunchenguid/homebrew-tap` with the release checksum.
 Any build, verification, checksum, or GitHub upload failure leaves the release as a draft and stops before the Homebrew update. A missing or invalid `HOMEBREW_TAP_TOKEN`, or another tap update failure, occurs after publication and fails the workflow without updating Homebrew.
 The generated Homebrew Cask quits Baby Menu during upgrade and relaunches it after installation only when the app was already running before uninstall started.
 Maintainers must keep `HOMEBREW_TAP_TOKEN` configured with write access to `kunchenguid/homebrew-tap` for the final cask update.
