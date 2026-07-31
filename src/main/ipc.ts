@@ -29,6 +29,7 @@ type AgentRuntimeFacade = Pick<
   BabyMenuAgentRuntime,
   "save" | "rollback" | "currentSessionSnapshot" | "currentTurn"
 > & {
+  cancel?: () => Promise<boolean>;
   send: (prompt: string, options?: BabyMenuAgentRuntimeSendOptions) => Promise<AgentChatResult>;
 };
 
@@ -100,6 +101,10 @@ export function registerIpcHandlers(
 
   ipcMain.handle("baby-menu:agent:active-turn", async (): Promise<AgentActiveTurn | null> => {
     return agentRuntime.currentTurn();
+  });
+
+  ipcMain.handle("baby-menu:agent:cancel", async (): Promise<boolean> => {
+    return (await agentRuntime.cancel?.()) ?? false;
   });
 
   ipcMain.handle("baby-menu:git:save", async (_event, message?: string): Promise<GitActionResult> => {

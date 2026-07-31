@@ -341,6 +341,7 @@ export class BabyMenuAgentRuntime {
   private activeSession: AgentChangeSession | null = null;
   private activeTurn = false;
   private activeTurnInfo: AgentActiveTurn | null = null;
+  private activeTurnCancel: (() => Promise<void>) | null = null;
   private agentName: string;
   private registryOverrides: Record<string, string> | undefined;
   private registryOverridesStale = false;
@@ -448,6 +449,12 @@ export class BabyMenuAgentRuntime {
     this.telemetry?.track("agent_switch", { agent: telemetryAgentName(next) });
   }
 
+  async cancel(): Promise<boolean> {
+    if (!this.activeTurnCancel) return false;
+    await this.activeTurnCancel().catch(() => undefined);
+    return true;
+  }
+
   async send(prompt: string, options: BabyMenuAgentRuntimeSendOptions = {}): Promise<AgentChatResult> {
     if (this.activeTurn) {
       return {
@@ -463,6 +470,7 @@ export class BabyMenuAgentRuntime {
     } finally {
       this.activeTurn = false;
       this.activeTurnInfo = null;
+      this.activeTurnCancel = null;
     }
   }
 
@@ -576,6 +584,9 @@ export class BabyMenuAgentRuntime {
         timeoutMs: 0,
       });
 
+      this.activeTurnCancel = async () => {
+        await turn.cancel({ reason: "user" });
+      };
       const output = await this.collectTurnOutput(turn, turnLog, options);
       await turnLog.finish("completed").catch(() => undefined);
 

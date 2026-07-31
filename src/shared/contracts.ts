@@ -260,6 +260,7 @@ export type BabyMenuApi = {
   };
   agent: {
     send: (prompt: string) => Promise<AgentChatResult>;
+    cancel?: () => Promise<boolean>;
     onStatus: (listener: (status: AgentRuntimeStatus) => void) => () => void;
     // The turn currently running in the main process, or null. Lets the renderer
     // restore the in-progress run strip after the popover view is remounted (e.g.

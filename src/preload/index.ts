@@ -19,6 +19,7 @@ const api: BabyMenuApi = {
   },
   agent: {
     send: (prompt: string) => ipcRenderer.invoke("baby-menu:agent:send", prompt),
+    cancel: () => ipcRenderer.invoke("baby-menu:agent:cancel"),
     onStatus: (listener: (status: AgentRuntimeStatus) => void) => {
       const handler = (_event: unknown, status: AgentRuntimeStatus) => listener(status);
       ipcRenderer.on("baby-menu:agent:status", handler);
