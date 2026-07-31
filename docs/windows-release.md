@@ -17,7 +17,7 @@ The workflow uploads both files as the `baby-menu-win-x64-unsigned-internal-prev
 
 The single job has `contents: read` permission, installs locked dependencies, runs typecheck and tests, builds the application, and invokes electron-builder for Windows x64. `CSC_IDENTITY_AUTO_DISCOVERY=false` prevents certificate auto-discovery, and the deterministic resolver accepts only the `-unsigned.exe` artifact name before computing its SHA-256 checksum.
 
-Running `pnpm package:win` locally likewise produces an unsigned installer under `release/`.
+Running `pnpm package:win` locally likewise produces an unsigned installer under `release/`, using the separate **Baby Menu Dev** product name and `com.kunchenguid.baby-menu.dev` application identity so the preview does not collide with an installed production build.
 
 ## Validation
 

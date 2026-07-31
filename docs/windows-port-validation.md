@@ -45,7 +45,7 @@ Item 10 records the platform-portable subset CI runs on a Windows host.
 10. **Windows CI** (`.github/workflows/ci.yml`, `windows` job) — runs `pnpm typecheck`, `pnpm build`, and **39 test files** on `windows-latest`: the five platform unit files, both stdin prompt regressions, 31 extension/widget/agent/app-support unit files, and the package-content assertion after building `win-unpacked`.
     Its packaged-binary sanity check verifies the PE header and exercises the packaged executable only through a bounded `ELECTRON_RUN_AS_NODE` script; it does not claim GUI persistence on a GitHub-hosted runner.
     Deferred test categories (each with a concrete reason in the CI comment):
-    `e2e-acp-runtime` (real ACP subprocess + git + acp-mock), `e2e-adapters` (real Claude/Codex CLIs), `e2e-grok-quota-refresh` (real Grok OIDC creds), `app-lifecycle*.test.ts` (Electron GUI lifecycle), `tray.test.ts` (macOS tray / BrowserWindow), `popover-*.test.ts` (Electron BrowserWindow / screen bounds), `grok-quota-generated-install` (POSIX process-group signals), `renderer/*` plus widget-host/widget-canvas/agent-chat/settings-* (jsdom/React), `widget-protocol.test.ts` (Electron binary not guaranteed on Windows runners).
+    `e2e-acp-runtime` (real ACP subprocess + git + acp-mock), `e2e-adapters` (real Claude/Codex CLIs), `e2e-grok-quota-refresh` (real Grok OIDC creds), `app-lifecycle*.test.ts` (Electron GUI lifecycle), `tray.test.ts` (Electron Tray/nativeImage APIs), `popover-*.test.ts` (Electron BrowserWindow / screen bounds), `grok-quota-generated-install` (POSIX process-group signals), `renderer/*` plus widget-host/widget-canvas/agent-chat/settings-* (jsdom/React), `widget-protocol.test.ts` (Electron binary not guaranteed on Windows runners).
     `.github/workflows/ci.yml`.
 
 11. **Windows ICO icon assets** (`assets/app-icon.ico`, `assets/tray/baby_menu.ico`, `scripts/generate-windows-icons.mjs`) — deterministic ICO generation from the same vector source used for the macOS `iconTemplate.png`.
@@ -53,17 +53,17 @@ Item 10 records the platform-portable subset CI runs on a Windows host.
 
 12. **Platform-aware tray icon loading** (`src/main/app-paths.ts`, `src/main/tray.ts`) — `trayIconPath` resolves to `baby_menu.ico` on Windows and `baby_menuTemplate.png` on macOS.
     The tray icon loads from the correct path per platform; on Windows the `.ico` file is not set as a template image.
-    `tests/tray.test.ts` (macOS stubs), `tests/app-paths.test.ts` (path resolution per platform).
+    `tests/tray.test.ts` (platform stubs), `tests/app-paths.test.ts` (path resolution per platform).
 
 13. **Windows tray tooltip, context menu, and onOpen/onQuit callbacks** (`src/main/tray.ts`) — `createBabyMenuTray` accepts optional `onOpen` and `onQuit` callbacks.
-    On Windows the tray sets a tooltip ("baby-menu"), builds a context menu with Open and Quit items, and wires the callbacks through click handlers.
-    `tests/tray.test.ts`.
+    On Windows the tray sets a tooltip ("Baby Menu") and builds an **Open Baby Menu** / **Quit** context menu. **Open Baby Menu** always shows or focuses the popover; clicking the tray icon retains toggle behavior.
+    `tests/tray.test.ts`, `tests/app-lifecycle-windows.test.ts`.
 
-14. **AppUserModelID and single-instance lock** (`src/main/app.ts`) — `app.setAppUserModelId("com.kunchenguid.baby-menu")` runs before `app.whenReady()` on Windows so the taskbar groups the instance correctly.
-    `app.requestSingleInstanceLock()` ensures only the first process creates the tray/popover/runtime; a second instance quits after forwarding its activation to the primary popover.
+14. **AppUserModelID and single-instance lock** (`src/main/app.ts`) — `app.setAppUserModelId` runs before `app.whenReady()` on Windows, using `com.kunchenguid.baby-menu` for the production executable and `com.kunchenguid.baby-menu.dev` for source/dev or packaged **Baby Menu Dev** previews.
+    `app.requestSingleInstanceLock()` ensures only the first process creates the tray/popover/runtime; a second instance quits after requesting that the primary show or focus its popover. Activations received before tray creation are queued and coalesced until startup is ready.
     Cross-platform unit coverage via the broader app-support test suite.
 
-15. **Windows taskbar-aware popover geometry** (`src/main/popover.ts`) — `calculatePopoverBounds` computes the popover position against the Windows taskbar (workspace-aware `workArea`, not the full screen), using Electron's `display.getPrimaryDisplay().workArea`.
+15. **Windows taskbar-aware popover geometry** (`src/main/popover.ts`, `src/main/app.ts`) — `calculatePopoverBounds` computes the popover position against the taskbar-aware `workArea` (not the full screen) of the display nearest the tray icon.
     `tests/popover-position.test.ts` proves the popover stays within the work area on the expected side of the taskbar without launching Electron.
 
 ## Manual Windows 11 validation (evidence from WSL-interop check)

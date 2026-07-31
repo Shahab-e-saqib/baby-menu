@@ -66,7 +66,7 @@ jobs:
     #   e2e-adapters.test.ts       - requires real Claude/Codex CLIs
     #   e2e-grok-quota-refresh     - requires real Grok OIDC creds
     #   app-lifecycle*.test.ts     - Electron GUI lifecycle
-    #   tray.test.ts               - macOS tray / BrowserWindow
+    #   tray.test.ts               - Electron Tray/nativeImage APIs
     #   popover-*.test.ts          - Electron BrowserWindow / screen bounds
     #   grok-quota-generated-install.test.ts - POSIX process-group signals
     #   renderer/*, widget-host, widget-canvas, agent-chat, settings-* - jsdom/React
