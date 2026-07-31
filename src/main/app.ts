@@ -405,8 +405,8 @@ export async function startBabyMenuApp(): Promise<void> {
     },
     {
       iconPath: paths.trayIconPath,
-      onOpen: (bounds) => {
-        void togglePopover(bounds);
+      onOpen: () => {
+        void requestPopoverActivation();
       },
       onQuit: () => app.quit(),
     },

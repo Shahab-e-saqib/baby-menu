@@ -6,7 +6,14 @@ const trayInstance = {
   getBounds: vi.fn(),
 };
 
-const createBabyMenuTray = vi.fn((_onClick: (bounds: Rectangle) => void) => trayInstance);
+type TrayOptions = {
+  onOpen?: (bounds: Rectangle) => void;
+  onQuit?: () => void;
+};
+
+const createBabyMenuTray = vi.fn(
+  (_onClick: (bounds: Rectangle) => void, _options: TrayOptions) => trayInstance,
+);
 
 const electronApp = {
   commandLine: { appendSwitch: vi.fn() },
@@ -221,6 +228,27 @@ describe("Windows shell lifecycle", () => {
     expect(trayInstance.getBounds).toHaveBeenCalledExactlyOnceWith();
     expect(browserWindowInstance.setBounds).toHaveBeenCalledWith({ x: 8, y: 42, width: 504, height: 620 });
     expect(browserWindowInstance.focus).toHaveBeenCalledExactlyOnceWith();
+  });
+
+  it("makes the Windows context-menu Open action show or focus without hiding", async () => {
+    const appModule = await import("../src/main/app");
+    await appModule.startBabyMenuApp();
+    const trayOptions = createBabyMenuTray.mock.calls.at(-1)?.[1] as {
+      onOpen?: (bounds: Rectangle) => void;
+    };
+
+    expect(trayOptions.onOpen).toBeTypeOf("function");
+
+    trayOptions.onOpen?.({ x: 100, y: 10, width: 24, height: 24 });
+    await vi.waitFor(() => expect(browserWindowInstance.show).toHaveBeenCalledExactlyOnceWith());
+
+    browserWindowInstance.isVisible.mockReturnValue(true);
+    browserWindowInstance.focus.mockClear();
+    browserWindowInstance.hide.mockClear();
+    trayOptions.onOpen?.({ x: 100, y: 10, width: 24, height: 24 });
+
+    await vi.waitFor(() => expect(browserWindowInstance.focus).toHaveBeenCalledExactlyOnceWith());
+    expect(browserWindowInstance.hide).not.toHaveBeenCalled();
   });
 
   it("coalesces second-instance activation received before tray creation", async () => {
