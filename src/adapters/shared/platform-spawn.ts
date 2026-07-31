@@ -153,6 +153,22 @@ export function resolveDriverSpawn(
   options: ResolveCommandOptions = {},
 ): DriverSpawnSpec {
   const platform = options.platform ?? process.platform;
+  const env = options.env ?? process.env;
+  const wslDistribution = env.BABY_MENU_CLI_MODE === "wsl" ? env.BABY_MENU_WSL_DISTRIBUTION?.trim() : undefined;
+  if (platform === "win32" && wslDistribution) {
+    // Structured wsl.exe arguments keep the distribution, cwd, provider, and
+    // provider arguments out of shell text. The host validates all three before
+    // the adapter reaches this path.
+    const linuxCwd = options.cwd && /^[A-Za-z]:[\\/]/.test(options.cwd)
+      ? `/mnt/${options.cwd[0]!.toLowerCase()}/${options.cwd.slice(3).replaceAll("\\", "/")}`
+      : options.cwd && /^\//.test(options.cwd) ? options.cwd : undefined;
+    if (!linuxCwd) throw new Error("The workspace path cannot be represented inside WSL.");
+    return {
+      command: "wsl.exe",
+      args: ["--distribution", wslDistribution, "--cd", linuxCwd, "--exec", command, ...args],
+      options: { windowsHide: true },
+    };
+  }
   const resolved = resolveDriverCommand(command, options);
   if (platform !== "win32") return { command: resolved, args: [...args], options: {} };
   const ext = win32Path.extname(resolved).toLowerCase();

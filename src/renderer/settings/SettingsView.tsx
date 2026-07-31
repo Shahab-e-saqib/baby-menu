@@ -30,6 +30,9 @@ export function SettingsView({ sections, runtimeImporter }: SettingsViewProps = 
   const [openAtLogin, setOpenAtLogin] = useState(false);
   const [agents, setAgents] = useState<BabyMenuAgentOption[]>([]);
   const [agentName, setAgentName] = useState("");
+  const [agentModes, setAgentModes] = useState<Record<string, "native" | "wsl">>({});
+  const [wslDistribution, setWslDistribution] = useState("Ubuntu");
+  const [wslDistributions, setWslDistributions] = useState<string[]>([]);
   const [agentSwitchDisabledReason, setAgentSwitchDisabledReason] = useState<string | undefined>();
   const [pendingAgent, setPendingAgent] = useState<BabyMenuAgentOption | null>(null);
   const [agentForm, setAgentForm] = useState<AgentFormState | null>(null);
@@ -46,6 +49,9 @@ export function SettingsView({ sections, runtimeImporter }: SettingsViewProps = 
       setOpenAtLogin(settings.openAtLogin);
       setAgents(settings.agents);
       setAgentName(settings.agentName);
+      setAgentModes(settings.agentModes ?? {});
+      setWslDistribution(settings.wslDistribution ?? "Ubuntu");
+      setWslDistributions(settings.wslDistributions ?? []);
       setAgentSwitchDisabledReason(settings.agentSwitchDisabledReason);
     });
     return () => {
@@ -62,6 +68,9 @@ export function SettingsView({ sections, runtimeImporter }: SettingsViewProps = 
   function applySettings(result: BabyMenuSettings) {
     setAgentName(result.agentName);
     setAgents(result.agents);
+    setAgentModes(result.agentModes ?? {});
+    setWslDistribution(result.wslDistribution ?? "Ubuntu");
+    setWslDistributions(result.wslDistributions ?? []);
     setAgentSwitchDisabledReason(result.agentSwitchDisabledReason);
   }
 
@@ -154,6 +163,22 @@ export function SettingsView({ sections, runtimeImporter }: SettingsViewProps = 
                 </span>
                 {active ? <StatusDot tone="live" /> : null}
               </button>
+              <select
+                aria-label={`${agent.label} execution mode`}
+                value={agentModes[agent.name] ?? "native"}
+                disabled={switchBlocked}
+                onChange={(event) => {
+                  const mode = event.target.value as "native" | "wsl";
+                  void (async () => {
+                    const result = await window.babyMenu?.settings.setAgentMode?.(agent.name, mode);
+                    if (result) applySettings(result);
+                  })();
+                }}
+                className="rounded-sm border border-line bg-canvas px-1.5 py-1 text-xs text-ink-soft"
+              >
+                <option value="native">Native</option>
+                <option value="wsl">WSL ({wslDistribution})</option>
+              </select>
               {agent.custom ? (
                 <>
                   <Button
@@ -179,6 +204,24 @@ export function SettingsView({ sections, runtimeImporter }: SettingsViewProps = 
             </div>
           );
         })}
+        {wslDistributions.length > 0 ? (
+          <label className="flex items-center gap-2 text-xs text-ink-soft">
+            WSL distribution
+            <select
+              aria-label="WSL distribution"
+              value={wslDistribution}
+              onChange={(event) => {
+                void (async () => {
+                  const result = await window.babyMenu?.settings.setWslDistribution?.(event.target.value);
+                  if (result) applySettings(result);
+                })();
+              }}
+              className="rounded-sm border border-line bg-canvas px-1.5 py-1 text-xs text-ink-soft"
+            >
+              {wslDistributions.map((distribution) => <option key={distribution} value={distribution}>{distribution}</option>)}
+            </select>
+          </label>
+        ) : null}
         {agentListError ? <span className="text-xs text-signal-danger">{agentListError}</span> : null}
         <Button variant="ghost" size="sm" className="mt-1 gap-1.5 self-start" onClick={openAddAgentForm}>
           <Plus className="size-3.5" /> add agent

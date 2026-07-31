@@ -81,6 +81,8 @@ export type BabyMenuCustomAgentInput = {
   command: string;
 };
 
+export type AgentExecutionMode = "native" | "wsl";
+
 export type BabyMenuSettings = {
   openAtLogin: boolean;
   /** Name of the active embedded agent. */
@@ -89,6 +91,9 @@ export type BabyMenuSettings = {
   agentSwitchDisabledReason?: string;
   /** Selectable agents; unavailable ones are shown disabled with an install hint. */
   agents: BabyMenuAgentOption[];
+  agentModes?: Record<string, AgentExecutionMode>;
+  wslDistribution?: string;
+  wslDistributions?: string[];
 };
 
 // SQL bind parameters: positional (an array) or named (an object keyed by the
@@ -309,6 +314,8 @@ export type BabyMenuApi = {
     updateAgent: (name: string, input: { label?: string; command: string }) => Promise<BabyMenuSettings>;
     /** Removes a custom agent. Rejects if the agent is currently active. */
     removeAgent: (name: string) => Promise<BabyMenuSettings>;
+    setAgentMode?: (agentName: string, mode: AgentExecutionMode) => Promise<BabyMenuSettings>;
+    setWslDistribution?: (distribution: string) => Promise<BabyMenuSettings>;
   };
   app: {
     /** Fully quits the Electron app from the popover shell. */

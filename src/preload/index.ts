@@ -69,6 +69,8 @@ const api: BabyMenuApi = {
     updateAgent: (name: string, input: { label?: string; command: string }) =>
       ipcRenderer.invoke("baby-menu:settings:update-agent", name, input),
     removeAgent: (name: string) => ipcRenderer.invoke("baby-menu:settings:remove-agent", name),
+    setAgentMode: (agentName, mode) => ipcRenderer.invoke("baby-menu:settings:set-agent-mode", agentName, mode),
+    setWslDistribution: (distribution) => ipcRenderer.invoke("baby-menu:settings:set-wsl-distribution", distribution),
   },
   app: {
     quit: () => ipcRenderer.invoke("baby-menu:app:quit"),

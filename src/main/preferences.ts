@@ -5,6 +5,8 @@ export type BabyMenuPreferences = {
   openAtLogin: boolean;
   /** Persisted embedded-agent choice; absent until the user picks one. */
   agentName?: string;
+  agentModes?: Record<string, "native" | "wsl">;
+  wslDistribution?: string;
 };
 
 type LoginItemApp = {
@@ -15,6 +17,8 @@ export type PreferencesService = {
   get: () => Promise<BabyMenuPreferences>;
   setOpenAtLogin: (openAtLogin: boolean) => Promise<BabyMenuPreferences>;
   setAgent: (agentName: string) => Promise<BabyMenuPreferences>;
+  setAgentMode: (agentName: string, mode: "native" | "wsl") => Promise<BabyMenuPreferences>;
+  setWslDistribution: (distribution: string) => Promise<BabyMenuPreferences>;
   apply: () => Promise<BabyMenuPreferences>;
 };
 
@@ -35,9 +39,15 @@ export function createPreferencesService({
 
   function normalizePreferences(preferences: BabyMenuPreferences): BabyMenuPreferences {
     const agentName = preferences.agentName?.trim();
+    const agentModes = Object.fromEntries(
+      Object.entries(preferences.agentModes ?? {}).filter(([name, mode]) => name.trim() && (mode === "native" || mode === "wsl")),
+    ) as Record<string, "native" | "wsl">;
+    const wslDistribution = preferences.wslDistribution?.trim();
     return {
       openAtLogin: allowOpenAtLogin && preferences.openAtLogin,
       ...(agentName ? { agentName } : {}),
+      ...(Object.keys(agentModes).length ? { agentModes } : {}),
+      ...(wslDistribution ? { wslDistribution } : {}),
     };
   }
 
@@ -49,7 +59,12 @@ export function createPreferencesService({
   async function readPreferences(): Promise<BabyMenuPreferences> {
     try {
       const parsed = JSON.parse(await readFile(filePath, "utf8")) as Partial<BabyMenuPreferences>;
-      return normalizePreferences({ openAtLogin: parsed.openAtLogin ?? defaultOpenAtLogin, agentName: parsed.agentName });
+      return normalizePreferences({
+        openAtLogin: parsed.openAtLogin ?? defaultOpenAtLogin,
+        agentName: parsed.agentName,
+        agentModes: parsed.agentModes,
+        wslDistribution: parsed.wslDistribution,
+      });
     } catch {
       return normalizePreferences({ openAtLogin: defaultOpenAtLogin });
     }
@@ -72,6 +87,14 @@ export function createPreferencesService({
     async setAgent(agentName) {
       const current = await readPreferences();
       return writePreferences(normalizePreferences({ ...current, agentName }));
+    },
+    async setAgentMode(agentName, mode) {
+      const current = await readPreferences();
+      return writePreferences(normalizePreferences({ ...current, agentModes: { ...current.agentModes, [agentName]: mode } }));
+    },
+    async setWslDistribution(distribution) {
+      const current = await readPreferences();
+      return writePreferences(normalizePreferences({ ...current, wslDistribution: distribution }));
     },
     async apply() {
       const preferences = await readPreferences();
