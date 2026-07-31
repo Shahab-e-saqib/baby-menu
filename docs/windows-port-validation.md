@@ -187,10 +187,10 @@ A focused PowerShell runner at `scripts/Verify-BabyMenuRuntimeSmoke.ps1` validat
 2. Prove no Baby Menu process is already running from the unpacked directory.
 3. Launch the app exactly once via `ProcessStartInfo` with `UseShellExecute=false`, redirected stdout/stderr, isolated env.
 4. Poll for 20 seconds, snapshot alive-at-deadline.
-5. If alive: record persistence pass, then controlled `taskkill /T /F /PID` cleanup.
+5. Record persistence success only if the launch is alive at the deadline; the `finally` path then performs controlled `taskkill /T /F /PID` cleanup when the process is still running.
 6. If exited early: capture exit code, parse stdout/stderr for the `second-instance-rejected` JSON marker (safe evidence with SHA-256 digests, never raw env/credentials).
-7. Best-effort CIM-based survivor sweep proves no descendant processes survive under the unpacked directory.
-8. Environment restoration verified after `finally` block.
+7. An unconditional CIM-based survivor sweep proves no process remains under the unpacked directory; a sweep error or any survivor fails the smoke.
+8. Only after survivor proof, restore the parent environment and remove the isolated temp profile; verify environment restoration after the `finally` block.
 9. Structured failure evidence JSON written to runner temp, uploaded as a 7-day-retention artifact only on failure.
 
 The smoke uses one ordinary packaged launch and does not pass `--no-sandbox`, `--disable-gpu`, elevation, or retry flags. It therefore leaves the production single-instance lock, Chromium sandbox, native-drive GPU behavior, Windows Defender, and Smart App Control in force.

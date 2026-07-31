@@ -40,7 +40,7 @@ Follow these rules:
 
 ## Architecture
 
-This is a macOS tray-bar Electron app whose distinguishing idea is that an embedded agent (running via `acpx/runtime`) edits the active extension workspace at runtime.
+This is a tray-bar Electron app whose distinguishing idea is that an embedded agent (running via `acpx/runtime`) edits the active extension workspace at runtime.
 Tracked source extensions use git as the accept/rollback mechanism when selected explicitly; packaged mode edits `~/.baby-menu/extensions` and uses filesystem snapshots.
 
 Three processes, kept deliberately separate:
@@ -61,7 +61,7 @@ The extension-facing slice of that contract is a generated public surface, treat
 
 - `app.ts` - Electron lifecycle, popover window creation, packaged path setup, extension seeding, preferences, selectable-agent catalog wiring, protocols, tray, and IPC. `package.json#main` points here via `out/main/index.js`.
 - `app-paths.ts` - resolves source paths versus packaged `~/.baby-menu` paths.
-- `tray.ts` - macOS tray icon and click handling (`createBabyMenuTray`).
+- `tray.ts` - platform-aware tray icon, click handling, and Windows context-menu wiring (`createBabyMenuTray`).
 - `popover.ts` - popover `BrowserWindow` options (`createPopoverOptions`), adaptive width/height sizing (`responsivePopoverSize`), bounds math (`calculatePopoverBounds`), and renderer URL/file loading (`loadPopoverRenderer`).
 - `ipc.ts` - registers all `ipcMain` handlers exposed via the preload bridge; the single place new generic IPC routes are added.
 - `agent-catalog.ts` - defines built-in agents, parses custom `agents.json`, computes Settings availability, and builds `acpx` registry overrides.
