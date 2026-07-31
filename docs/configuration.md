@@ -25,7 +25,7 @@ If a previously saved Native selection becomes unavailable, Baby Menu stops befo
 | `agents.json` | Override or append catalog entries manually. |
 
 On Windows, each built-in also has an explicit Native/WSL setting. WSL mode is opt-in per agent; Baby Menu never switches execution mode or distribution automatically. Settings persists one WSL distribution shared by both built-ins and lists installed distributions when `wsl.exe` is available.
-Before every WSL turn, Baby Menu verifies `wsl.exe`, the selected distribution, access to the translated workspace, and the provider CLI inside that distribution. Drive-letter workspaces are translated to `/mnt/<drive>/...`; UNC workspaces are rejected. A failed preflight stops before adapter launch with bounded guidance and does not expose paths, usernames, environment values, tokens, or provider stderr.
+Before every WSL turn, Baby Menu verifies `wsl.exe`, the selected distribution, access to the translated workspace, and the provider CLI through that distribution's Bash login environment. This lets WSL installations found only through login-configured paths such as `~/.local/bin` or an NVM directory work without adding them to the Windows system `PATH`. Drive-letter workspaces are translated to `/mnt/<drive>/...`; UNC workspaces are rejected. A failed preflight stops before adapter launch with bounded guidance and does not expose paths, usernames, environment values, tokens, or provider stderr.
 
 If a send fails, the popover shows bounded, actionable guidance instead of raw provider diagnostics or a generic unavailable hint.
 For built-in agents, authentication failures prompt you to run `codex login` or launch `claude` and complete sign-in before trying again.
