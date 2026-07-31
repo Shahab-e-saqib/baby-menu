@@ -457,7 +457,7 @@ export class BabyMenuAgentRuntime {
       throw new AgentTurnFailedError({
         code: "CLI_NOT_FOUND",
         detailCode: "CLI_NOT_FOUND",
-        message: `${label} is unavailable because its CLI was not found. Install the ${cli} CLI or add it to the Windows PATH, then restart Baby Menu.`,
+        message: `${label} is unavailable because its CLI was not found. Install the ${cli} CLI or add it to the system PATH, then restart Baby Menu.`,
         retryable: false,
       });
     }

@@ -64,7 +64,7 @@ describe("agent runtime defaults", () => {
       agentAvailability: { [agentName]: false },
     });
     await expect(runtime.send("hello")).rejects.toThrow(
-      `${label} is unavailable because its CLI was not found. Install the ${cli} CLI or add it to the Windows PATH, then restart Baby Menu.`,
+      `${label} is unavailable because its CLI was not found. Install the ${cli} CLI or add it to the system PATH, then restart Baby Menu.`,
     );
   });
 
