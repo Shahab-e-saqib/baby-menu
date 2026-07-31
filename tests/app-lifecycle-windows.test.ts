@@ -20,7 +20,7 @@ const electronApp = {
   disableHardwareAcceleration: vi.fn(),
   dock: { hide: vi.fn() },
   getAppPath: vi.fn(() => "/repo"),
-  getPath: vi.fn((name: string) => {
+  getPath: vi.fn((name: string): string => {
     if (name === "home") return "/home/test-user";
     if (name === "exe") return "C:\\Program Files\\Baby Menu\\Baby Menu.exe";
     return "/tmp";
