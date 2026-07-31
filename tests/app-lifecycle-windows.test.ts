@@ -52,6 +52,33 @@ const browserWindowInstance = {
   webContents: { send: vi.fn() },
 };
 
+const preferencesHarness = vi.hoisted(() => {
+  let current: {
+    openAtLogin: boolean;
+    agentName?: string;
+    agentModes?: Record<string, "native" | "wsl">;
+    wslDistribution?: string;
+  } = { openAtLogin: false };
+  const service = {
+    apply: vi.fn(async () => current),
+    get: vi.fn(async () => current),
+    setOpenAtLogin: vi.fn(async (openAtLogin: boolean) => (current = { ...current, openAtLogin })),
+    setAgent: vi.fn(async (agentName: string) => (current = { ...current, agentName })),
+    setAgentMode: vi.fn(async (agentName: string, mode: "native" | "wsl") =>
+      (current = { ...current, agentModes: { ...current.agentModes, [agentName]: mode } })),
+    setWslDistribution: vi.fn(async (wslDistribution: string) => (current = { ...current, wslDistribution })),
+  };
+  return {
+    service,
+    reset() {
+      current = { openAtLogin: false };
+    },
+  };
+});
+
+const listWslDistributions = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, distributions: ["Ubuntu"] })));
+const registerIpcHandlers = vi.hoisted(() => vi.fn());
+
 vi.mock("electron", () => ({
   app: electronApp,
   BrowserWindow: vi.fn(function MockBrowserWindow() { return browserWindowInstance; }),
@@ -60,15 +87,27 @@ vi.mock("electron", () => ({
   shell: { openExternal: vi.fn(async () => undefined) },
 }));
 
-vi.mock("../src/main/ipc", () => ({ registerIpcHandlers: vi.fn() }));
+vi.mock("../src/main/ipc", () => ({ registerIpcHandlers }));
 vi.mock("../src/main/telemetry", () => {
   const client = { track: vi.fn(), pageview: vi.fn(), close: vi.fn(async () => undefined) };
   return { initDefaultTelemetry: vi.fn(() => client), getDefaultTelemetry: vi.fn(() => client) };
 });
 vi.mock("../src/main/agent-runtime", () => ({
-  BabyMenuAgentRuntime: vi.fn(),
+  BabyMenuAgentRuntime: vi.fn(function BabyMenuAgentRuntimeMock() {
+    return {
+      currentAgent: "claude",
+      agentSwitchDisabledReason: undefined,
+      setAgent: vi.fn(async () => undefined),
+      setExecutionMode: vi.fn(async () => undefined),
+      setRegistryOverrides: vi.fn(),
+    };
+  }),
   commandExists: vi.fn(() => false),
 }));
+vi.mock("../src/main/preferences", () => ({
+  createPreferencesService: vi.fn(() => preferencesHarness.service),
+}));
+vi.mock("../src/main/wsl-cli", () => ({ listWslDistributions }));
 vi.mock("../src/main/extension-seeder", () => ({
   seedExtensionWorkspace: vi.fn(async () => undefined),
 }));
@@ -118,6 +157,8 @@ describe("Windows shell lifecycle", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
+    preferencesHarness.reset();
+    listWslDistributions.mockImplementation(async () => ({ ok: true as const, distributions: ["Ubuntu"] }));
     vi.spyOn(console, "warn");
     electronApp.isPackaged = false;
     electronApp.getPath.mockImplementation((name: string) => {
@@ -336,6 +377,33 @@ describe("Windows shell lifecycle", () => {
     await import("../src/main/app");
 
     expect(electronApp.setAppUserModelId).not.toHaveBeenCalled();
+  });
+
+  it("returns current preferences when WSL settings probes finish out of order", async () => {
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      value: "win32",
+    });
+    const resolvers: Array<(value: { ok: true; distributions: string[] }) => void> = [];
+    listWslDistributions.mockImplementation(
+      () => new Promise<{ ok: true; distributions: string[] }>((resolve) => resolvers.push(resolve)),
+    );
+    const appModule = await import("../src/main/app");
+    await appModule.startBabyMenuApp();
+    const settings = registerIpcHandlers.mock.calls.at(-1)?.[5] as {
+      get: () => Promise<{ agentModes?: Record<string, "native" | "wsl"> }>;
+      setAgentMode: (agentName: string, mode: "native" | "wsl") => Promise<{ agentModes?: Record<string, "native" | "wsl"> }>;
+    };
+
+    const earlier = settings.get();
+    await vi.waitFor(() => expect(listWslDistributions).toHaveBeenCalledTimes(1));
+    const later = settings.setAgentMode("codex", "wsl");
+    await vi.waitFor(() => expect(listWslDistributions).toHaveBeenCalledTimes(2));
+
+    resolvers[1]?.({ ok: true, distributions: ["Ubuntu"] });
+    await expect(later).resolves.toMatchObject({ agentModes: { codex: "wsl" } });
+    resolvers[0]?.({ ok: true, distributions: ["Ubuntu"] });
+    await expect(earlier).resolves.toMatchObject({ agentModes: { codex: "wsl" } });
   });
 
 });

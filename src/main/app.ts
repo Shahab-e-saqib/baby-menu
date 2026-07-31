@@ -332,8 +332,8 @@ export async function startBabyMenuApp(): Promise<void> {
   const notify = createNotifier();
 
   async function buildSettings(): Promise<BabyMenuSettings> {
-    const current = await preferences.get();
     const wslProbe = process.platform === "win32" ? await listWslDistributions() : null;
+    const current = await preferences.get();
     return {
       openAtLogin: current.openAtLogin,
       agentName: agentRuntime.currentAgent,
