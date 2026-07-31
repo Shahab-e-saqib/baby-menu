@@ -161,6 +161,10 @@ function Invoke-RuntimeSmoke {
     # Create isolated temp directory for child's TEMP/TMP
     $isolatedTemp = Join-Path $isolatedDirs['LOCALAPPDATA'] 'Temp'
     $null = New-Item -ItemType Directory -Path $isolatedTemp -Force
+    # Electron's singleton lock is scoped by userData. Pass an explicit fresh
+    # directory so the smoke cannot collide with any installed/running profile.
+    $isolatedUserData = Join-Path $tempRoot 'Electron-User-Data'
+    $null = New-Item -ItemType Directory -Path $isolatedUserData -Force
 
     $diagnostics = @{
         exitCode                = $null
@@ -220,6 +224,7 @@ function Invoke-RuntimeSmoke {
         $psi.RedirectStandardError = $true
         $psi.CreateNoWindow = $true
         $psi.WorkingDirectory = $unpackedCanon
+        $psi.Arguments = '--user-data-dir="' + $isolatedUserData + '"'
 
         # Minimal env allowlist — never inherit CI secrets (GITHUB_, ACTIONS_, etc.)
         $psi.EnvironmentVariables.Clear()

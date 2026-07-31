@@ -523,9 +523,9 @@ try {
     # Inline the function
     function Get-ExecutablePath-Local { param([string]$Dir)
         $exe = Join-Path $Dir 'Baby Menu.exe'
-        if (Test-Path $exe) { return $exe }
+        if (Test-Path $exe -PathType Leaf) { return $exe }
         $exe2 = Join-Path $Dir 'BabyMenu.exe'
-        if (Test-Path $exe2) { return $exe2 }
+        if (Test-Path $exe2 -PathType Leaf) { return $exe2 }
         return $null
     }
     $result30 = Get-ExecutablePath-Local -Dir $g30Dir

@@ -340,6 +340,12 @@ describe("windows-runtime-smoke-contract", () => {
     expect(content).toMatch(/Temp[\s\S]*New-Item[\s\S]*-Path[\s\S]*isolatedTemp/);
   });
 
+  it("passes an explicit fresh user-data-dir inside the bounded temp root", () => {
+    expect(content).toMatch(/\$isolatedUserData = Join-Path \$tempRoot 'Electron-User-Data'/);
+    expect(content).toMatch(/New-Item -ItemType Directory -Path \$isolatedUserData -Force/);
+    expect(content).toMatch(/\$psi\.Arguments\s*=\s*'--user-data-dir="' \+ \$isolatedUserData \+ '"'/);
+  });
+
   it("failure evidence payload includes Diagnostics hashtable with safe fields", () => {
     // Evidence payload carries $smokeResult.Diagnostics
     expect(content).toMatch(/Diagnostics = \$smokeResult\.Diagnostics/);
