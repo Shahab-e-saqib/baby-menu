@@ -42,7 +42,8 @@ Item 10 records the platform-portable subset CI runs on a Windows host.
 9. **Windows package native dependencies** (`pnpm-workspace.yaml`, `tests/windows-packaging.test.ts`) — `supportedArchitectures` retains `win32` optional packages including `lightningcss-win32-x64-msvc`.
    Windows CI builds an x64 `win-unpacked` package and asserts the packaged `app.asar.unpacked` tree contains `lightningcss.win32-x64-msvc.node`.
 
-10. **Windows CI** (`.github/workflows/ci.yml`, `windows` job) — runs `pnpm typecheck`, `pnpm build`, and **38 test files** on `windows-latest`: the five platform unit files, both stdin prompt regressions, the package-content assertion, plus 31 extension/widget/agent/app-support unit files.
+10. **Windows CI** (`.github/workflows/ci.yml`, `windows` job) — runs `pnpm typecheck`, `pnpm build`, and **39 test files** on `windows-latest`: the five platform unit files, both stdin prompt regressions, 31 extension/widget/agent/app-support unit files, and the package-content assertion after building `win-unpacked`.
+    Its packaged-binary sanity check verifies the PE header and exercises the packaged executable only through a bounded `ELECTRON_RUN_AS_NODE` script; it does not claim GUI persistence on a GitHub-hosted runner.
     Deferred test categories (each with a concrete reason in the CI comment):
     `e2e-acp-runtime` (real ACP subprocess + git + acp-mock), `e2e-adapters` (real Claude/Codex CLIs), `e2e-grok-quota-refresh` (real Grok OIDC creds), `app-lifecycle*.test.ts` (Electron GUI lifecycle), `tray.test.ts` (macOS tray / BrowserWindow), `popover-*.test.ts` (Electron BrowserWindow / screen bounds), `grok-quota-generated-install` (POSIX process-group signals), `renderer/*` plus widget-host/widget-canvas/agent-chat/settings-* (jsdom/React), `widget-protocol.test.ts` (Electron binary not guaranteed on Windows runners).
     `.github/workflows/ci.yml`.
@@ -143,7 +144,7 @@ A native Windows agent installation was not available.
 
 ### D. The broader test suite on Windows
 
-The `windows` CI job runs 38 test files spanning platform units, extension infrastructure, widget pipeline, agent/runtime, and app support.
+The `windows` CI job runs 39 test files spanning platform units, extension infrastructure, widget pipeline, agent/runtime, app support, and packaged-content verification.
 Many specs execute `/bin/bash`/`/bin/sh`, rely on Unix fixtures (shebangs, `chmod`, symlinks), or are explicitly `skipIf(win32)` — 10 `skipIf(win32)` guards cover symlink, chmod, and Nix-store-specific test cases across `extension-seeder`, `extension-module-compiler`, `widget-tailwind-css`, `layout-module-registry`, and `dev-extension-change-session`.
 Porting core ACP/change-session e2e (removing win32 skips in `tests/e2e-acp-runtime.test.ts`) is not done here.
 
@@ -179,10 +180,10 @@ The contract `tests/windows-native-validation.test.ts` validates the runner's st
 
 ## Packaged runtime persistence smoke
 
-A focused PowerShell runner at `scripts/Verify-BabyMenuRuntimeSmoke.ps1` validates the packaged app's runtime persistence without requiring the NSIS installer. It runs against the `win-unpacked` electron-builder dir output on the Windows CI runner.
+A focused PowerShell runner at `scripts/Verify-BabyMenuRuntimeSmoke.ps1` validates the packaged app's runtime persistence without requiring the NSIS installer. The workflow `.github/workflows/windows-persistence-smoke.yml` is `workflow_dispatch`-only and runs against `win-unpacked` on a self-hosted runner explicitly labeled `Windows`, `X64`, and `baby-menu-interactive`; the GitHub-hosted CI workflow does not run this GUI check.
 
 **Scope (automated, single primary launch):**
-1. Create fresh temp roots for APPDATA/LOCALAPPDATA/USERPROFILE/HOME, isolated from the true user profile.
+1. Create fresh temp roots for APPDATA/LOCALAPPDATA/USERPROFILE/HOME and an explicit Electron `--user-data-dir`, isolated from the true user profile and any installed Baby Menu instance.
 2. Prove no Baby Menu process is already running from the unpacked directory.
 3. Launch the app exactly once via `ProcessStartInfo` with `UseShellExecute=false`, redirected stdout/stderr, isolated env.
 4. Poll for 20 seconds, snapshot alive-at-deadline.
@@ -190,7 +191,9 @@ A focused PowerShell runner at `scripts/Verify-BabyMenuRuntimeSmoke.ps1` validat
 6. If exited early: capture exit code, parse stdout/stderr for the `second-instance-rejected` JSON marker (safe evidence with SHA-256 digests, never raw env/credentials).
 7. Best-effort CIM-based survivor sweep proves no descendant processes survive under the unpacked directory.
 8. Environment restoration verified after `finally` block.
-9. Structured failure evidence JSON written to runner temp, uploaded as a 1-day-retention artifact only on failure.
+9. Structured failure evidence JSON written to runner temp, uploaded as a 7-day-retention artifact only on failure.
+
+The smoke uses one ordinary packaged launch and does not pass `--no-sandbox`, `--disable-gpu`, elevation, or retry flags. It therefore leaves the production single-instance lock, Chromium sandbox, native-drive GPU behavior, Windows Defender, and Smart App Control in force.
 
 **Secondary instance behavior** (second launch exits cleanly without STATUS_BREAKPOINT) is covered by unit test in `tests/app-lifecycle-windows.test.ts`, not by a second packaged launch.
 
