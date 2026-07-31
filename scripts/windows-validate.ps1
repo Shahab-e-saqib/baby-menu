@@ -55,6 +55,8 @@ trap {
 
 if (-not $DiagnosticDir) { $DiagnosticDir = "$InstallDir-diagnostic" }
 $script:Checks = New-Object System.Collections.ArrayList
+$script:ProductNames = @('Baby Menu', 'Baby Menu Dev')
+$script:ExecutableNames = @('Baby Menu.exe', 'Baby Menu Dev.exe', 'BabyMenu.exe')
 
 function Add-CheckResult {
     param(
@@ -261,7 +263,7 @@ function Invoke-InstalledFilesCheck {
     $hasAsar = $false
     $hasUnpacked = $false
     foreach ($e in $entries) {
-        if ($e.Name -match 'Baby Menu\.exe$|BabyMenu\.exe$' -and -not $e.PSIsContainer) { $hasExe = $true }
+        if ($script:ExecutableNames -contains $e.Name -and -not $e.PSIsContainer) { $hasExe = $true }
         if ($e.Name -eq 'app.asar' -and -not $e.PSIsContainer) { $hasAsar = $true }
         if ($e.Name -eq 'app.asar.unpacked' -and $e.PSIsContainer) { $hasUnpacked = $true }
     }
@@ -296,8 +298,8 @@ function Invoke-ShortcutCheck {
     $found = $false
     foreach ($dir in $startMenuDirs) {
         if (-not (Test-Path $dir)) { continue }
-        $lnkFiles = Get-ChildItem -Path $dir -Filter 'Baby Menu*.lnk' -Recurse -ErrorAction SilentlyContinue
-        if ($lnkFiles) { $found = $true; break }
+        $lnkFiles = Get-ChildItem -Path $dir -Filter '*.lnk' -Recurse -ErrorAction SilentlyContinue
+        if ($lnkFiles | Where-Object { $script:ProductNames -contains $_.BaseName }) { $found = $true; break }
     }
 
     if ($found) { Add-CheckResult -Name 'shortcuts' -Status 'pass' -Detail 'Baby Menu Start Menu shortcut found' }
@@ -323,7 +325,7 @@ function Invoke-RegistryUninstallCheck {
         $subKeys = Get-ChildItem -Path $uninstallKey -ErrorAction SilentlyContinue
         foreach ($sk in $subKeys) {
             $displayName = (Get-ItemProperty -Path $sk.PSPath -Name 'DisplayName' -ErrorAction SilentlyContinue).DisplayName
-            if ($displayName -and $displayName -match 'Baby Menu') {
+            if ($displayName -and $script:ProductNames -contains $displayName) {
                 $found = $true
                 $version = (Get-ItemProperty -Path $sk.PSPath -Name 'DisplayVersion' -ErrorAction SilentlyContinue).DisplayVersion
                 $publisher = (Get-ItemProperty -Path $sk.PSPath -Name 'Publisher' -ErrorAction SilentlyContinue).Publisher
@@ -468,11 +470,15 @@ function Invoke-BoundedLaunchCheck {
     }
     Write-Host "  [EXEC] Launching Baby Menu (timeout=${LaunchTimeoutSeconds}s)"
 
-    $exePath = [System.IO.Path]::Combine($InstallDir, 'Baby Menu.exe')
-    if (-not (Test-Path $exePath)) {
-        $exePath = [System.IO.Path]::Combine($InstallDir, 'BabyMenu.exe')
+    $exePath = $null
+    foreach ($exeName in $script:ExecutableNames) {
+        $candidate = [System.IO.Path]::Combine($InstallDir, $exeName)
+        if (Test-Path $candidate -PathType Leaf) {
+            $exePath = $candidate
+            break
+        }
     }
-    if (-not (Test-Path $exePath)) {
+    if (-not $exePath) {
         Add-CheckResult -Name 'bounded-launch-persistence' -Status 'fail' -Detail "Executable not found in $InstallDir"
         Add-CheckResult -Name 'bounded-launch-cleanup' -Status 'skip' -Detail 'Cleanup skipped: executable not found'
         return
@@ -826,6 +832,7 @@ function Invoke-UninstallCheck {
 
     $uninstPaths = @(
         [System.IO.Path]::Combine($InstallDir, 'Uninstall Baby Menu.exe'),
+        [System.IO.Path]::Combine($InstallDir, 'Uninstall Baby Menu Dev.exe'),
         [System.IO.Path]::Combine($InstallDir, 'Uninstall.exe'),
         [System.IO.Path]::Combine($InstallDir, 'uninst.exe'),
         [System.IO.Path]::Combine($InstallDir, 'uninstall.exe')

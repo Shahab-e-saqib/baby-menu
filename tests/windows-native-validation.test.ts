@@ -625,6 +625,13 @@ describe("windows-native-validation", () => {
     expect(babyIdx, "Uninstall Baby Menu.exe must come before Uninstall.exe in the search array").toBeLessThan(genericIdx);
   });
 
+  it("accepts exact production and dev package identities", () => {
+    expect(content).toContain("$script:ProductNames = @('Baby Menu', 'Baby Menu Dev')");
+    expect(content).toContain("$script:ExecutableNames = @('Baby Menu.exe', 'Baby Menu Dev.exe', 'BabyMenu.exe')");
+    expect(content).toContain("'Uninstall Baby Menu Dev.exe'");
+    expect(content).toMatch(/\$script:ProductNames -contains \$displayName/);
+  });
+
   it("enumerates all processes under InstallDir via Win32_Process for survivor cleanup", () => {
     expect(content).toMatch(/Win32_Process/);
     expect(content).toMatch(/ExecutablePath/);

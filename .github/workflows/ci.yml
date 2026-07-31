@@ -164,18 +164,34 @@ jobs:
           if ($env:PATHEXT) { $psi.EnvironmentVariables['PATHEXT'] = $env:PATHEXT }
           if ($env:PATH) { $psi.EnvironmentVariables['PATH'] = $env:PATH }
 
-          $proc = [System.Diagnostics.Process]::Start($psi)
-          $stdout = $proc.StandardOutput.ReadToEnd()
-          $stderr = $proc.StandardError.ReadToEnd()
-          $proc.WaitForExit(10000) | Out-Null
+          $proc = $null
+          try {
+            $proc = [System.Diagnostics.Process]::Start($psi)
+            $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+            $stderrTask = $proc.StandardError.ReadToEndAsync()
+            if (-not $proc.WaitForExit(10000)) {
+              try { $proc.Kill($true) } catch { Write-Warning "Forced process-tree cleanup failed: $_" }
+              $proc.WaitForExit(5000) | Out-Null
+              throw "ELECTRON_RUN_AS_NODE exceeded the 10-second timeout"
+            }
 
-          $exitCode = $proc.ExitCode
-          if ($exitCode -ne 0) { throw "ELECTRON_RUN_AS_NODE exited with code $exitCode. stderr: $stderr" }
-          if ($stdout -notmatch '^electron-run-as-node-\d+$') { throw "Unexpected ELECTRON_RUN_AS_NODE output: $stdout" }
-          Write-Host "[PASS] ELECTRON_RUN_AS_NODE: $($stdout.Trim())"
+            $stdout = $stdoutTask.GetAwaiter().GetResult()
+            $stderr = $stderrTask.GetAwaiter().GetResult()
+            $exitCode = $proc.ExitCode
+            if ($exitCode -ne 0) { throw "ELECTRON_RUN_AS_NODE exited with code $exitCode. stderr: $stderr" }
+            if ($stdout -notmatch '^electron-run-as-node-\d+$') { throw "Unexpected ELECTRON_RUN_AS_NODE output: $stdout" }
+            Write-Host "[PASS] ELECTRON_RUN_AS_NODE: $($stdout.Trim())"
+          } finally {
+            if ($proc) {
+              if (-not $proc.HasExited) {
+                try { $proc.Kill($true) } catch { Write-Warning "Final process-tree cleanup failed: $_" }
+                $proc.WaitForExit(5000) | Out-Null
+              }
+              $proc.Dispose()
+            }
+            Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+          }
 
-          # Cleanup
-          Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
           Write-Host "[PASS] Temp cleaned up"
           Write-Host ''
 

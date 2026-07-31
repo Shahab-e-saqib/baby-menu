@@ -85,12 +85,7 @@ if (!windowsAdapterLaunchRequest) {
   isPrimaryInstance = app.requestSingleInstanceLock();
   if (isPrimaryInstance) {
     app.on("second-instance", () => {
-      if (popoverWindow && !popoverWindow.isDestroyed()) {
-        if (!popoverWindow.isVisible()) {
-          popoverWindow.show();
-        }
-        popoverWindow.focus();
-      }
+      void activatePopoverFromTray();
     });
   } else {
     console.warn(
@@ -156,6 +151,23 @@ async function togglePopover(trayBounds: Rectangle): Promise<void> {
     return;
   }
 
+  await showPopover(trayBounds, window);
+}
+
+async function activatePopoverFromTray(): Promise<void> {
+  if (!activeTray) return;
+  const trayBounds = activeTray.getBounds();
+  latestTrayBounds = trayBounds;
+  const window = await createPopoverWindow();
+  if (window.isVisible()) {
+    window.focus();
+    return;
+  }
+
+  await showPopover(trayBounds, window);
+}
+
+async function showPopover(trayBounds: Rectangle, window: BrowserWindow): Promise<void> {
   const display = screen.getDisplayNearestPoint({ x: trayBounds.x, y: trayBounds.y });
   window.setBounds(calculatePopoverBounds(trayBounds, display.workArea, latestPopoverSize));
   setPopoverKeyWindowActive(true);

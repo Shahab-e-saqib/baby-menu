@@ -27,6 +27,16 @@ describe("CI packaging artifact contract", () => {
     expect(workflow).toContain("if-no-files-found: error");
   });
 
+  it("bounds packaged Node sanity asynchronously and force-cleans the process tree", async () => {
+    const workflow = await readFile(resolve(import.meta.dirname, "../.github/workflows/ci.yml"), "utf8");
+
+    expect(workflow).toContain("ReadToEndAsync()");
+    expect(workflow).toContain("if (-not $proc.WaitForExit(10000))");
+    expect(workflow).toContain("$proc.Kill($true)");
+    expect(workflow).toContain("} finally {");
+    expect(workflow).toContain("$proc.Dispose()");
+  });
+
   it("does not publish or code-sign the NSIS installer as a public release", async () => {
     const workflow = await readFile(resolve(import.meta.dirname, "../.github/workflows/ci.yml"), "utf8");
 

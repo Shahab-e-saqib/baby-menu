@@ -111,6 +111,9 @@ describe("Windows shell lifecycle", () => {
     electronApp.isPackaged = false;
     electronApp.requestSingleInstanceLock.mockReset();
     electronApp.requestSingleInstanceLock.mockReturnValue(true);
+    browserWindowInstance.isDestroyed.mockReturnValue(false);
+    browserWindowInstance.isVisible.mockReturnValue(false);
+    trayInstance.getBounds.mockReturnValue({ x: 100, y: 10, width: 24, height: 24 });
     delete process.env.BABY_MENU_REMOTE_DEBUGGING_PORT;
     Object.defineProperty(process, "platform", {
       configurable: true,
@@ -195,15 +198,28 @@ describe("Windows shell lifecycle", () => {
     browserWindowInstance.focus.mockClear();
     browserWindowInstance.show.mockClear();
     onSecondInstance?.();
+    await vi.waitFor(() => expect(browserWindowInstance.focus).toHaveBeenCalledExactlyOnceWith());
     expect(browserWindowInstance.show).not.toHaveBeenCalled();
-    expect(browserWindowInstance.focus).toHaveBeenCalledExactlyOnceWith();
 
     // Popover is hidden - should show and focus
     browserWindowInstance.isVisible.mockReturnValue(false);
     browserWindowInstance.focus.mockClear();
     browserWindowInstance.show.mockClear();
     onSecondInstance?.();
-    expect(browserWindowInstance.show).toHaveBeenCalledExactlyOnceWith();
+    await vi.waitFor(() => expect(browserWindowInstance.show).toHaveBeenCalledExactlyOnceWith());
+    expect(browserWindowInstance.focus).toHaveBeenCalledExactlyOnceWith();
+  });
+
+  it("creates and shows the popover when a second instance activates a tray-only primary", async () => {
+    const appModule = await import("../src/main/app");
+    await appModule.startBabyMenuApp();
+    const onSecondInstance = electronApp.on.mock.calls.find(([event]) => event === "second-instance")?.[1];
+
+    onSecondInstance?.();
+
+    await vi.waitFor(() => expect(browserWindowInstance.show).toHaveBeenCalledExactlyOnceWith());
+    expect(trayInstance.getBounds).toHaveBeenCalledExactlyOnceWith();
+    expect(browserWindowInstance.setBounds).toHaveBeenCalledWith({ x: 8, y: 42, width: 504, height: 620 });
     expect(browserWindowInstance.focus).toHaveBeenCalledExactlyOnceWith();
   });
 
