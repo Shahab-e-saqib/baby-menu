@@ -1,5 +1,5 @@
 import { app, BrowserWindow, screen, shell, type Rectangle } from "electron";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BabyMenuCustomAgentInput, BabyMenuSettings } from "../shared/contracts";
 import { getRepoRoot, isUncWindowsLaunch } from "../shared/paths";
@@ -75,7 +75,12 @@ if (!windowsAdapterLaunchRequest) {
 // Windows application identity must be set before app.whenReady() so the
 // taskbar groups the running instance under the correct AppUserModelID.
 if (!windowsAdapterLaunchRequest && process.platform === "win32") {
-  app.setAppUserModelId("com.kunchenguid.baby-menu");
+  const executablePath = app.getPath("exe");
+  const executableName = win32.basename(executablePath, win32.extname(executablePath));
+  const isDevIdentity = !app.isPackaged || executableName.toLowerCase() === "baby menu dev";
+  app.setAppUserModelId(
+    isDevIdentity ? "com.kunchenguid.baby-menu.dev" : "com.kunchenguid.baby-menu",
+  );
 }
 
 // Single-instance lock: only the first process creates the tray, popover,

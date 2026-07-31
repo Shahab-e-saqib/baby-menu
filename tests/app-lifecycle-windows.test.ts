@@ -20,7 +20,11 @@ const electronApp = {
   disableHardwareAcceleration: vi.fn(),
   dock: { hide: vi.fn() },
   getAppPath: vi.fn(() => "/repo"),
-  getPath: vi.fn((name: string) => (name === "home" ? "/home/test-user" : "/tmp")),
+  getPath: vi.fn((name: string) => {
+    if (name === "home") return "/home/test-user";
+    if (name === "exe") return "C:\\Program Files\\Baby Menu\\Baby Menu.exe";
+    return "/tmp";
+  }),
   getVersion: vi.fn(() => "0.0.0-test"),
   getLoginItemSettings: vi.fn(() => ({ openAtLogin: false })),
   setLoginItemSettings: vi.fn(),
@@ -116,6 +120,11 @@ describe("Windows shell lifecycle", () => {
     vi.resetModules();
     vi.spyOn(console, "warn");
     electronApp.isPackaged = false;
+    electronApp.getPath.mockImplementation((name: string) => {
+      if (name === "home") return "/home/test-user";
+      if (name === "exe") return "C:\\Program Files\\Baby Menu\\Baby Menu.exe";
+      return "/tmp";
+    });
     electronApp.requestSingleInstanceLock.mockReset();
     electronApp.requestSingleInstanceLock.mockReturnValue(true);
     browserWindowInstance.isDestroyed.mockReturnValue(false);
@@ -293,16 +302,32 @@ describe("Windows shell lifecycle", () => {
     expect(() => onSecondInstance?.()).not.toThrow();
   });
 
-  it("sets the Windows AppUserModelID to the application ID before readiness", async () => {
+  it("sets the production Windows AppUserModelID from the packaged executable identity", async () => {
     Object.defineProperty(process, "platform", {
       configurable: true,
       value: "win32",
     });
+    electronApp.isPackaged = true;
     electronApp.requestSingleInstanceLock.mockReturnValue(true);
 
     await import("../src/main/app");
 
     expect(electronApp.setAppUserModelId).toHaveBeenCalledExactlyOnceWith("com.kunchenguid.baby-menu");
+  });
+
+  it("sets the dev Windows AppUserModelID for a packaged preview", async () => {
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      value: "win32",
+    });
+    electronApp.isPackaged = true;
+    electronApp.getPath.mockImplementation((name: string) =>
+      name === "exe" ? "C:\\Preview\\Baby Menu Dev.exe" : "/tmp",
+    );
+
+    await import("../src/main/app");
+
+    expect(electronApp.setAppUserModelId).toHaveBeenCalledExactlyOnceWith("com.kunchenguid.baby-menu.dev");
   });
 
   it("does not set AppUserModelID on non-Windows platforms", async () => {

@@ -641,6 +641,16 @@ describe("windows-native-validation", () => {
     expect(content).toMatch(/No survivors after forced cleanup/);
   });
 
+  it("bounded cleanup includes the launched PID and fails closed on enumeration errors", () => {
+    const launchFunc = content.match(/function Invoke-BoundedLaunchCheck \{[\s\S]*?^}/m);
+    expect(launchFunc).not.toBeNull();
+    const fn = launchFunc![0];
+    const cimQueries = fn.match(/Get-CimInstance -ClassName Win32_Process[^\r\n]*/g) ?? [];
+    expect(cimQueries.length).toBeGreaterThanOrEqual(4);
+    expect(cimQueries.every((query) => query.includes("-ErrorAction Stop"))).toBe(true);
+    expect(fn).not.toMatch(/ProcessId -ne \$launchedPid/);
+  });
+
   // ---- Regression tests for plan-only zero-mutation fix ----
 
   it("plan-only Write-Evidence returns JSON before any New-Item or Out-File", () => {

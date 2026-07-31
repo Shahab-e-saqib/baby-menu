@@ -675,10 +675,10 @@ function Invoke-BoundedLaunchCheck {
         # === CLEANUP ===
         # Best-effort sweep: kill every process whose ExecutablePath is under InstallDir.
         Start-Sleep -Seconds 1
-        $allProcesses = Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue
+        $allProcesses = Get-CimInstance -ClassName Win32_Process -ErrorAction Stop
         $installDirProcs = @()
         foreach ($p in $allProcesses) {
-            if ($p.ExecutablePath -and $p.ProcessId -ne $launchedPid) {
+            if ($p.ExecutablePath -and $p.ProcessId -ne 0) {
                 $pexDir = [System.IO.Path]::GetDirectoryName($p.ExecutablePath).TrimEnd('\')
                 if ($pexDir -eq $installDirCanon -or $pexDir.StartsWith("$installDirCanon\", [StringComparison]::OrdinalIgnoreCase)) {
                     $installDirProcs += $p
@@ -689,8 +689,8 @@ function Invoke-BoundedLaunchCheck {
         Start-Sleep -Seconds 1
 
         # Final survivor check
-        $remaining = Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-            $_.ExecutablePath -and $_.ProcessId -ne $launchedPid -and $_.ProcessId -ne 0
+        $remaining = Get-CimInstance -ClassName Win32_Process -ErrorAction Stop | Where-Object {
+            $_.ExecutablePath -and $_.ProcessId -ne 0
         }
         $survivors = @()
         foreach ($p in $remaining) {
@@ -738,7 +738,7 @@ function Invoke-BoundedLaunchCheck {
         $cleanupSwept = $false
         if ($procLaunched) {
             try {
-                $allProcs = Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue
+                $allProcs = Get-CimInstance -ClassName Win32_Process -ErrorAction Stop
                 $installDirProcsCatch = @()
                 foreach ($p in $allProcs) {
                     if ($p.ExecutablePath) {
@@ -750,7 +750,7 @@ function Invoke-BoundedLaunchCheck {
                     }
                 }
                 Start-Sleep -Seconds 1
-                $remainingCatch = Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+                $remainingCatch = Get-CimInstance -ClassName Win32_Process -ErrorAction Stop | Where-Object {
                     $_.ExecutablePath -and $_.ProcessId -ne 0
                 }
                 $survivorsCatch = @()
