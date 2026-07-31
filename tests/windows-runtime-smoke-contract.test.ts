@@ -293,6 +293,27 @@ describe("windows-runtime-smoke-contract", () => {
     expect(finallyBlock).toMatch(/Test-Path \$tempRoot/);
   });
 
+  it("guarantees launched-process termination and survivor proof before profile removal", () => {
+    const fnBody = content.substring(content.indexOf("function Invoke-RuntimeSmoke"));
+    const tryIdx = fnBody.indexOf("try {");
+    const procInitIdx = fnBody.indexOf("$proc = $null");
+    const finallyIdx = fnBody.indexOf("finally {");
+    const finallyBlock = fnBody.substring(finallyIdx);
+    const killIdx = finallyBlock.indexOf("taskkill /T /F /PID $launchedPid");
+    const survivorIdx = finallyBlock.indexOf("cleanup-no-survivors");
+    const profileRemovalIdx = finallyBlock.indexOf("Remove-Item -Path $tempRoot");
+    expect(procInitIdx).toBeGreaterThan(0);
+    expect(procInitIdx).toBeLessThan(tryIdx);
+    expect(killIdx).toBeGreaterThan(0);
+    expect(survivorIdx).toBeGreaterThan(killIdx);
+    expect(profileRemovalIdx).toBeGreaterThan(survivorIdx);
+  });
+
+  it("returns redacted failure diagnostics after terminating runtime exceptions", () => {
+    expect(content).toMatch(/catch\s*\{[\s\S]*runtimeErrorSHA256[\s\S]*Passed = \$false/);
+    expect(content).not.toMatch(/runtimeError\s*=\s*\$runtimeError/);
+  });
+
   it("records cleanup-temp pass/fail via Add-CheckResult", () => {
     expect(content).toMatch(/cleanup-temp/);
     expect(content).toMatch(/Temp root removed:/);

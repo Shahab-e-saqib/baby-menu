@@ -174,10 +174,14 @@ function Invoke-RuntimeSmoke {
         stderrLength            = 0
         stdoutSHA256            = $null
         stderrSHA256            = $null
+        runtimeErrorSHA256       = $null
     }
     $evidenceParts = @()
     $launchedPid = $null
     $procLaunched = $false
+    $proc = $null
+    $stdoutTask = $null
+    $stderrTask = $null
 
     # Initialize $savedEnv before try so finally always has a valid reference
     $savedEnv = @{}
@@ -239,8 +243,8 @@ function Invoke-RuntimeSmoke {
         if ($env:PATH) { $psi.EnvironmentVariables["PATH"] = $env:PATH }
 
         $proc = [System.Diagnostics.Process]::Start($psi)
-        $launchedPid = $proc.Id
         $procLaunched = $true
+        $launchedPid = $proc.Id
         Write-Host "  [INFO] Launched PID $launchedPid"
 
         $systemStdOut = $proc.StandardOutput
@@ -269,110 +273,119 @@ function Invoke-RuntimeSmoke {
             Add-CheckResult -Name 'runtime-persistence' -Status 'fail' -Detail "PID $launchedPid exited before deadline (exit code $($diagnostics.exitCode))"
         }
 
-        # ---- Controlled kill ----
-        if (-not $proc.HasExited) {
-            Write-Host "  [INFO] Controlled kill of PID $launchedPid and descendants"
-            & taskkill /T /F /PID $launchedPid 2>&1 | Out-Null
-            Start-Sleep -Seconds 1
-            $proc.Refresh()
-        }
-        if (-not $proc.HasExited) {
-            $proc.WaitForExit(5000) | Out-Null
-        } else {
-            $proc.WaitForExit(1000) | Out-Null
-        }
-        if ($proc.HasExited -and $null -eq $diagnostics.exitCode) {
-            $diagnostics.exitCode = $proc.ExitCode
-        }
-
-        try {
-            $stdoutTask.Wait(5000) | Out-Null
-            $stderrTask.Wait(5000) | Out-Null
-        } catch { }
-
-        # Cap and digest output
-        $maxCap = 65536
-        $rawStdout = $null
-        $rawStderr = $null
-        if ($stdoutTask.IsCompleted -and $stdoutTask.Result) {
-            $rawStdout = $stdoutTask.Result
-            $diagnostics.stdoutLength = $rawStdout.Length
-            if ($diagnostics.stdoutLength -gt 0) {
-                $diagnostics.stdoutSHA256 = [System.BitConverter]::ToString(
-                    [System.Security.Cryptography.SHA256]::Create().ComputeHash(
-                        [System.Text.Encoding]::UTF8.GetBytes($rawStdout)
-                    )
-                ).Replace('-', '')
+    } catch {
+        $runtimeError = "$_"
+        $diagnostics.runtimeErrorSHA256 = [System.BitConverter]::ToString(
+            [System.Security.Cryptography.SHA256]::Create().ComputeHash(
+                [System.Text.Encoding]::UTF8.GetBytes($runtimeError)
+            )
+        ).Replace('-', '')
+        Add-CheckResult -Name 'runtime-exception' -Status 'fail' -Detail "Runtime smoke threw; errorSHA256=$($diagnostics.runtimeErrorSHA256)"
+        return @{ Passed = $false; Diagnostics = $diagnostics }
+    } finally {
+        if ($procLaunched) {
+            try {
+                if (-not $proc.HasExited) {
+                    Write-Host "  [INFO] Controlled kill of PID $launchedPid and descendants"
+                    & taskkill /T /F /PID $launchedPid 2>&1 | Out-Null
+                    $proc.WaitForExit(5000) | Out-Null
+                    $proc.Refresh()
+                } else {
+                    $proc.WaitForExit(1000) | Out-Null
+                }
+                if ($proc.HasExited -and $null -eq $diagnostics.exitCode) {
+                    $diagnostics.exitCode = $proc.ExitCode
+                }
+            } catch {
+                Add-CheckResult -Name 'cleanup-launched-process' -Status 'fail' -Detail "Controlled cleanup threw: $_"
             }
-        }
-        if ($stderrTask.IsCompleted -and $stderrTask.Result) {
-            $rawStderr = $stderrTask.Result
-            $diagnostics.stderrLength = $rawStderr.Length
-            if ($diagnostics.stderrLength -gt 0) {
-                $diagnostics.stderrSHA256 = [System.BitConverter]::ToString(
-                    [System.Security.Cryptography.SHA256]::Create().ComputeHash(
-                        [System.Text.Encoding]::UTF8.GetBytes($rawStderr)
-                    )
-                ).Replace('-', '')
-            }
-        }
 
-        # Parse for second-instance-rejected marker
-        $markerPattern = '^\s*\{\s*"event"\s*:\s*"second-instance-rejected"\s*,\s*"platform"\s*:\s*"win32"\s*,\s*"isPackaged"\s*:\s*(true|false)\s*\}\s*$'
-        if ($rawStdout) {
-            foreach ($line in ($rawStdout -split "`n")) {
-                if ($line -match $markerPattern) { $diagnostics.singleInstanceRejected = $true; break }
-            }
-        }
-        if (-not $diagnostics.singleInstanceRejected -and $rawStderr) {
-            foreach ($line in ($rawStderr -split "`n")) {
-                if ($line -match $markerPattern) { $diagnostics.singleInstanceRejected = $true; break }
-            }
-        }
+            try {
+                if ($stdoutTask) { $stdoutTask.Wait(5000) | Out-Null }
+                if ($stderrTask) { $stderrTask.Wait(5000) | Out-Null }
+            } catch { }
 
-        # Survivor CIM sweep - ErrorAction Stop so inability to prove cleanup fails
-        try {
-            $remaining = Get-CimInstance -ClassName Win32_Process -ErrorAction Stop
-            $survivors = @()
-            foreach ($p in $remaining) {
-                if ($p.ExecutablePath) {
-                    $pexDir = [System.IO.Path]::GetDirectoryName($p.ExecutablePath).TrimEnd('\')
-                    if ($pexDir -eq $unpackedCanon -or $pexDir.StartsWith("$unpackedCanon\", [StringComparison]::OrdinalIgnoreCase)) {
-                        $survivors += $p
-                        & taskkill /T /F /PID $p.ProcessId 2>&1 | Out-Null
+            try {
+                $maxCap = 65536
+                $rawStdout = $null
+                $rawStderr = $null
+                if ($stdoutTask -and $stdoutTask.IsCompleted -and $stdoutTask.Result) {
+                    $rawStdout = $stdoutTask.Result
+                    $diagnostics.stdoutLength = $rawStdout.Length
+                    if ($diagnostics.stdoutLength -gt 0) {
+                        $diagnostics.stdoutSHA256 = [System.BitConverter]::ToString(
+                            [System.Security.Cryptography.SHA256]::Create().ComputeHash(
+                                [System.Text.Encoding]::UTF8.GetBytes($rawStdout)
+                            )
+                        ).Replace('-', '')
                     }
                 }
-            }
-            Start-Sleep -Seconds 1
-            $survivorsAfterSweep = @()
-            $allAfter = Get-CimInstance -ClassName Win32_Process -ErrorAction Stop
-            foreach ($p in $allAfter) {
-                if ($p.ExecutablePath) {
-                    $pexDir = [System.IO.Path]::GetDirectoryName($p.ExecutablePath).TrimEnd('\')
-                    if ($pexDir -eq $unpackedCanon -or $pexDir.StartsWith("$unpackedCanon\", [StringComparison]::OrdinalIgnoreCase)) {
-                        $survivorsAfterSweep += $p
+                if ($stderrTask -and $stderrTask.IsCompleted -and $stderrTask.Result) {
+                    $rawStderr = $stderrTask.Result
+                    $diagnostics.stderrLength = $rawStderr.Length
+                    if ($diagnostics.stderrLength -gt 0) {
+                        $diagnostics.stderrSHA256 = [System.BitConverter]::ToString(
+                            [System.Security.Cryptography.SHA256]::Create().ComputeHash(
+                                [System.Text.Encoding]::UTF8.GetBytes($rawStderr)
+                            )
+                        ).Replace('-', '')
                     }
                 }
+
+                $markerPattern = '^\s*\{\s*"event"\s*:\s*"second-instance-rejected"\s*,\s*"platform"\s*:\s*"win32"\s*,\s*"isPackaged"\s*:\s*(true|false)\s*\}\s*$'
+                if ($rawStdout) {
+                    foreach ($line in ($rawStdout -split "`n")) {
+                        if ($line -match $markerPattern) { $diagnostics.singleInstanceRejected = $true; break }
+                    }
+                }
+                if (-not $diagnostics.singleInstanceRejected -and $rawStderr) {
+                    foreach ($line in ($rawStderr -split "`n")) {
+                        if ($line -match $markerPattern) { $diagnostics.singleInstanceRejected = $true; break }
+                    }
+                }
+            } catch {
+                Add-CheckResult -Name 'diagnostic-capture' -Status 'fail' -Detail 'Failed to capture redacted process diagnostics'
             }
-            if ($survivorsAfterSweep.Count -eq 0) {
-                Add-CheckResult -Name 'cleanup-no-survivors' -Status 'pass' -Detail "No survivors after forced cleanup (launch PID=$launchedPid)"
-            } else {
-                Add-CheckResult -Name 'cleanup-no-survivors' -Status 'fail' -Detail "$($survivorsAfterSweep.Count) surviving process(es) under UnpackedDir after forced cleanup (launch PID=$launchedPid)"
+
+            try {
+                $remaining = Get-CimInstance -ClassName Win32_Process -ErrorAction Stop
+                foreach ($p in $remaining) {
+                    if ($p.ExecutablePath) {
+                        $pexDir = [System.IO.Path]::GetDirectoryName($p.ExecutablePath).TrimEnd('\')
+                        if ($pexDir -eq $unpackedCanon -or $pexDir.StartsWith("$unpackedCanon\", [StringComparison]::OrdinalIgnoreCase)) {
+                            & taskkill /T /F /PID $p.ProcessId 2>&1 | Out-Null
+                        }
+                    }
+                }
+                Start-Sleep -Seconds 1
+                $survivorsAfterSweep = @()
+                $allAfter = Get-CimInstance -ClassName Win32_Process -ErrorAction Stop
+                foreach ($p in $allAfter) {
+                    if ($p.ExecutablePath) {
+                        $pexDir = [System.IO.Path]::GetDirectoryName($p.ExecutablePath).TrimEnd('\')
+                        if ($pexDir -eq $unpackedCanon -or $pexDir.StartsWith("$unpackedCanon\", [StringComparison]::OrdinalIgnoreCase)) {
+                            $survivorsAfterSweep += $p
+                        }
+                    }
+                }
+                if ($survivorsAfterSweep.Count -eq 0) {
+                    Add-CheckResult -Name 'cleanup-no-survivors' -Status 'pass' -Detail "No survivors after forced cleanup (launch PID=$launchedPid)"
+                } else {
+                    Add-CheckResult -Name 'cleanup-no-survivors' -Status 'fail' -Detail "$($survivorsAfterSweep.Count) surviving process(es) under UnpackedDir after forced cleanup (launch PID=$launchedPid)"
+                }
+            } catch {
+                Add-CheckResult -Name 'cleanup-no-survivors' -Status 'fail' -Detail "Cleanup sweep threw: $_"
             }
-        } catch {
-            Add-CheckResult -Name 'cleanup-no-survivors' -Status 'fail' -Detail "Cleanup sweep threw: $_"
+
+            $evidenceParts += "singleInstanceRejected=$($diagnostics.singleInstanceRejected)"
+            $evidenceParts += "exitCode=$($diagnostics.exitCode)"
+            $evidenceParts += "stdoutLen=$($diagnostics.stdoutLength)"
+            $evidenceParts += "stderrLen=$($diagnostics.stderrLength)"
+            if ($diagnostics.stdoutSHA256) { $evidenceParts += "stdoutSHA256=$($diagnostics.stdoutSHA256)" }
+            if ($diagnostics.stderrSHA256) { $evidenceParts += "stderrSHA256=$($diagnostics.stderrSHA256)" }
+            Add-CheckResult -Name 'diagnostic-evidence' -Status 'pass' -Detail ($evidenceParts -join '; ')
         }
 
-        # Safe diagnostic evidence (never raw env/credentials)
-        $evidenceParts += "singleInstanceRejected=$($diagnostics.singleInstanceRejected)"
-        $evidenceParts += "exitCode=$($diagnostics.exitCode)"
-        $evidenceParts += "stdoutLen=$($diagnostics.stdoutLength)"
-        $evidenceParts += "stderrLen=$($diagnostics.stderrLength)"
-        if ($diagnostics.stdoutSHA256) { $evidenceParts += "stdoutSHA256=$($diagnostics.stdoutSHA256)" }
-        if ($diagnostics.stderrSHA256) { $evidenceParts += "stderrSHA256=$($diagnostics.stderrSHA256)" }
-        Add-CheckResult -Name 'diagnostic-evidence' -Status 'pass' -Detail ($evidenceParts -join '; ')
-
-        # Profile-writes-contained observation
         $isolatedAppDataFiles = Get-ChildItem -Path $isolatedDirs['APPDATA'] -Recurse -ErrorAction SilentlyContinue
         $isolatedLocalFiles = Get-ChildItem -Path $isolatedDirs['LOCALAPPDATA'] -Recurse -ErrorAction SilentlyContinue
         $wroteToIsolated = ($isolatedAppDataFiles.Count -gt 0) -or ($isolatedLocalFiles.Count -gt 0)
@@ -382,7 +395,6 @@ function Invoke-RuntimeSmoke {
             Add-CheckResult -Name 'profile-writes-contained' -Status 'pass' -Detail 'No detectable profile writes (app may not have created profile data within timeout)'
         }
 
-    } finally {
         Restore-Environment -Backup $savedEnv
         Write-Host '  [INFO] Parent environment variables restored'
 
