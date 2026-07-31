@@ -223,6 +223,29 @@ describe("Windows shell lifecycle", () => {
     expect(browserWindowInstance.focus).toHaveBeenCalledExactlyOnceWith();
   });
 
+  it("coalesces second-instance activation received before tray creation", async () => {
+    let finishSeeding: (() => void) | undefined;
+    const seeding = new Promise<void>((resolve) => {
+      finishSeeding = resolve;
+    });
+    const { seedExtensionWorkspace } = await import("../src/main/extension-seeder");
+    (seedExtensionWorkspace as ReturnType<typeof vi.fn>).mockImplementationOnce(() => seeding);
+    const appModule = await import("../src/main/app");
+    const startup = appModule.startBabyMenuApp();
+    const onSecondInstance = electronApp.on.mock.calls.find(([event]) => event === "second-instance")?.[1];
+
+    onSecondInstance?.();
+    onSecondInstance?.();
+    expect(browserWindowInstance.show).not.toHaveBeenCalled();
+
+    finishSeeding?.();
+    await startup;
+
+    expect(trayInstance.getBounds).toHaveBeenCalledExactlyOnceWith();
+    expect(browserWindowInstance.show).toHaveBeenCalledExactlyOnceWith();
+    expect(browserWindowInstance.focus).toHaveBeenCalledExactlyOnceWith();
+  });
+
   it("is safe when a second-instance event fires before popover creation", async () => {
     const appModule = await import("../src/main/app");
 

@@ -80,12 +80,18 @@ if (!windowsAdapterLaunchRequest && process.platform === "win32") {
 
 // Single-instance lock: only the first process creates the tray, popover,
 // runtime, and background services. A second process quits immediately.
+let popoverWindow: BrowserWindow | null = null;
+let activeTray: BabyMenuTray | null = null;
+let pendingPopoverActivation = false;
+let popoverActivationPromise: Promise<void> | null = null;
+let latestTrayBounds: Rectangle | null = null;
+let latestPopoverSize: Size = DEFAULT_POPOVER_SIZE;
 let isPrimaryInstance = true;
 if (!windowsAdapterLaunchRequest) {
   isPrimaryInstance = app.requestSingleInstanceLock();
   if (isPrimaryInstance) {
     app.on("second-instance", () => {
-      void activatePopoverFromTray();
+      void requestPopoverActivation();
     });
   } else {
     console.warn(
@@ -98,11 +104,6 @@ if (!windowsAdapterLaunchRequest) {
     app.exit(0);
   }
 }
-
-let popoverWindow: BrowserWindow | null = null;
-let activeTray: BabyMenuTray | null = null;
-let latestTrayBounds: Rectangle | null = null;
-let latestPopoverSize: Size = DEFAULT_POPOVER_SIZE;
 
 export function getActiveBabyMenuTray(): BabyMenuTray | null {
   return activeTray;
@@ -155,7 +156,10 @@ async function togglePopover(trayBounds: Rectangle): Promise<void> {
 }
 
 async function activatePopoverFromTray(): Promise<void> {
-  if (!activeTray) return;
+  if (!activeTray) {
+    pendingPopoverActivation = true;
+    return;
+  }
   const trayBounds = activeTray.getBounds();
   latestTrayBounds = trayBounds;
   const window = await createPopoverWindow();
@@ -165,6 +169,24 @@ async function activatePopoverFromTray(): Promise<void> {
   }
 
   await showPopover(trayBounds, window);
+}
+
+function requestPopoverActivation(): Promise<void> | null {
+  if (!activeTray) {
+    pendingPopoverActivation = true;
+    return null;
+  }
+  if (popoverActivationPromise) return popoverActivationPromise;
+
+  pendingPopoverActivation = false;
+  popoverActivationPromise = activatePopoverFromTray()
+    .catch((error) => {
+      console.error("[baby-menu] popover activation failed", error);
+    })
+    .finally(() => {
+      popoverActivationPromise = null;
+    });
+  return popoverActivationPromise;
 }
 
 async function showPopover(trayBounds: Rectangle, window: BrowserWindow): Promise<void> {
@@ -390,8 +412,8 @@ export async function startBabyMenuApp(): Promise<void> {
     },
   );
 
-  if (process.env.BABY_MENU_OPEN_POPOVER_ON_START === "1") {
-    await togglePopover(activeTray.getBounds());
+  if (pendingPopoverActivation || process.env.BABY_MENU_OPEN_POPOVER_ON_START === "1") {
+    await requestPopoverActivation();
   }
 
   // Background tasks run on their own cadence in the main process, regardless of whether
