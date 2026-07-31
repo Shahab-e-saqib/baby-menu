@@ -78,6 +78,24 @@ const preferencesHarness = vi.hoisted(() => {
 
 const listWslDistributions = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, distributions: ["Ubuntu"] })));
 const registerIpcHandlers = vi.hoisted(() => vi.fn());
+const runtimeHarness = vi.hoisted(() => {
+  const instance = {
+    currentAgent: "claude",
+    agentSwitchDisabledReason: undefined,
+    setAgent: vi.fn(async () => undefined),
+    setExecutionMode: vi.fn(async () => undefined),
+    setRegistryOverrides: vi.fn(),
+  };
+  return {
+    instance,
+    reset() {
+      instance.currentAgent = "claude";
+      instance.setAgent.mockReset().mockResolvedValue(undefined);
+      instance.setExecutionMode.mockReset().mockResolvedValue(undefined);
+      instance.setRegistryOverrides.mockReset();
+    },
+  };
+});
 
 vi.mock("electron", () => ({
   app: electronApp,
@@ -94,13 +112,7 @@ vi.mock("../src/main/telemetry", () => {
 });
 vi.mock("../src/main/agent-runtime", () => ({
   BabyMenuAgentRuntime: vi.fn(function BabyMenuAgentRuntimeMock() {
-    return {
-      currentAgent: "claude",
-      agentSwitchDisabledReason: undefined,
-      setAgent: vi.fn(async () => undefined),
-      setExecutionMode: vi.fn(async () => undefined),
-      setRegistryOverrides: vi.fn(),
-    };
+    return runtimeHarness.instance;
   }),
   commandExists: vi.fn(() => false),
 }));
@@ -158,6 +170,7 @@ describe("Windows shell lifecycle", () => {
     vi.clearAllMocks();
     vi.resetModules();
     preferencesHarness.reset();
+    runtimeHarness.reset();
     listWslDistributions.mockImplementation(async () => ({ ok: true as const, distributions: ["Ubuntu"] }));
     vi.spyOn(console, "warn");
     electronApp.isPackaged = false;
@@ -404,6 +417,41 @@ describe("Windows shell lifecycle", () => {
     await expect(later).resolves.toMatchObject({ agentModes: { codex: "wsl" } });
     resolvers[0]?.({ ok: true, distributions: ["Ubuntu"] });
     await expect(earlier).resolves.toMatchObject({ agentModes: { codex: "wsl" } });
+  });
+
+  it("serializes overlapping agent mode mutations in acceptance order", async () => {
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      value: "win32",
+    });
+    let releaseFirst: (() => void) | undefined;
+    runtimeHarness.instance.setExecutionMode
+      .mockImplementationOnce(
+        () => new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        }),
+      )
+      .mockResolvedValueOnce(undefined);
+    const appModule = await import("../src/main/app");
+    await appModule.startBabyMenuApp();
+    const settings = registerIpcHandlers.mock.calls.at(-1)?.[5] as {
+      get: () => Promise<{ agentModes?: Record<string, "native" | "wsl"> }>;
+      setAgentMode: (agentName: string, mode: "native" | "wsl") => Promise<unknown>;
+    };
+
+    const first = settings.setAgentMode("claude", "wsl");
+    await vi.waitFor(() => expect(runtimeHarness.instance.setExecutionMode).toHaveBeenCalledTimes(1));
+    const second = settings.setAgentMode("claude", "native");
+    await Promise.resolve();
+    expect(runtimeHarness.instance.setExecutionMode).toHaveBeenCalledTimes(1);
+
+    releaseFirst?.();
+    await Promise.all([first, second]);
+    expect(preferencesHarness.service.setAgentMode.mock.calls).toEqual([
+      ["claude", "wsl"],
+      ["claude", "native"],
+    ]);
+    await expect(settings.get()).resolves.toMatchObject({ agentModes: { claude: "native" } });
   });
 
 });

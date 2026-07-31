@@ -346,6 +346,13 @@ export async function startBabyMenuApp(): Promise<void> {
     };
   }
 
+  let agentSettingsMutation = Promise.resolve();
+  function serializeAgentSettingsMutation<T>(mutation: () => Promise<T>): Promise<T> {
+    const result = agentSettingsMutation.then(mutation, mutation);
+    agentSettingsMutation = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
   const settingsController = {
     get: buildSettings,
     async setOpenAtLogin(openAtLogin: boolean) {
@@ -353,21 +360,27 @@ export async function startBabyMenuApp(): Promise<void> {
       return buildSettings();
     },
     async setAgent(agentName: string) {
-      await agentRuntime.setAgent(agentName);
-      const nextPreferences = await preferences.get();
-      await agentRuntime.setExecutionMode(nextPreferences.agentModes?.[agentName] ?? "native", nextPreferences.wslDistribution ?? "Ubuntu");
-      await preferences.setAgent(agentName);
+      await serializeAgentSettingsMutation(async () => {
+        await agentRuntime.setAgent(agentName);
+        const nextPreferences = await preferences.get();
+        await agentRuntime.setExecutionMode(nextPreferences.agentModes?.[agentName] ?? "native", nextPreferences.wslDistribution ?? "Ubuntu");
+        await preferences.setAgent(agentName);
+      });
       return buildSettings();
     },
     async setAgentMode(agentName: string, mode: "native" | "wsl") {
-      if (agentName === agentRuntime.currentAgent) await agentRuntime.setExecutionMode(mode, (await preferences.get()).wslDistribution ?? "Ubuntu");
-      await preferences.setAgentMode(agentName, mode);
+      await serializeAgentSettingsMutation(async () => {
+        if (agentName === agentRuntime.currentAgent) await agentRuntime.setExecutionMode(mode, (await preferences.get()).wslDistribution ?? "Ubuntu");
+        await preferences.setAgentMode(agentName, mode);
+      });
       return buildSettings();
     },
     async setWslDistribution(distribution: string) {
-      const current = await preferences.get();
-      if ((current.agentModes?.[agentRuntime.currentAgent] ?? "native") === "wsl") await agentRuntime.setExecutionMode("wsl", distribution);
-      await preferences.setWslDistribution(distribution);
+      await serializeAgentSettingsMutation(async () => {
+        const current = await preferences.get();
+        if ((current.agentModes?.[agentRuntime.currentAgent] ?? "native") === "wsl") await agentRuntime.setExecutionMode("wsl", distribution);
+        await preferences.setWslDistribution(distribution);
+      });
       return buildSettings();
     },
     async addAgent(input: BabyMenuCustomAgentInput) {
