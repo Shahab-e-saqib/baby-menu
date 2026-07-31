@@ -474,6 +474,7 @@ export class BabyMenuAgentRuntime {
         retryable: false,
       });
     }
+    let wslProvider: "claude" | "codex" | undefined;
     if (this.executionMode === "wsl") {
       if (process.platform !== "win32") {
         throw new AgentTurnFailedError({ code: "CLI_START_FAILED", detailCode: "WSL_UNAVAILABLE", message: "WSL mode is available on Windows only. Switch this agent to Native mode." });
@@ -481,11 +482,12 @@ export class BabyMenuAgentRuntime {
       if (this.agentName !== "claude" && this.agentName !== "codex") {
         throw new AgentTurnFailedError({ code: "CLI_START_FAILED", detailCode: "WSL_UNAVAILABLE", message: "WSL mode is supported only for Claude Code and Codex. Switch this agent to Native mode." });
       }
+      wslProvider = this.agentName;
     }
     const agentCwd = await this.ensureAgentRuntimeCwd();
-    if (this.executionMode === "wsl") {
+    if (wslProvider) {
       const { validateWslLaunch } = await import("./wsl-cli");
-      const reason = await validateWslLaunch(this.wslDistribution, this.agentName, agentCwd);
+      const reason = await validateWslLaunch(this.wslDistribution, wslProvider, agentCwd);
       if (reason) throw new AgentTurnFailedError({ code: "CLI_START_FAILED", detailCode: "WSL_UNAVAILABLE", message: reason });
     }
     const changeSession = await this.beginChangeSession(agentCwd);

@@ -38,7 +38,8 @@ An unchanged `server.ts` module instance stays alive across invokes and backgrou
 ## Agent runtime
 
 - **Bundled ACP adapters.**
-  Built-in Claude Code and Codex launch `out/adapters/<name>/index.mjs`, wrapping the local authenticated CLI in isolation from user-level agent config.
+  Built-in Claude Code and Codex launch `out/adapters/<name>/index.mjs`, wrapping the selected native-host or Windows WSL CLI in isolation from user-level agent config.
+  In WSL mode the host preflights the turn, then the adapter uses structured `wsl.exe` arguments while retaining its stdin streaming and cancellation paths; the user-facing mode and validation contract is owned by [Configuration](configuration.md#choosing-an-agent).
   Codex still reuses only the top-level `model` from `$CODEX_HOME/config.toml` (or `~/.codex/config.toml`) so `--ignore-user-config` does not force an unsupported default.
 - **Terminal failure semantics.**
   CLI, authentication, rate-limit, and provider failures reject through ACP with typed, bounded messages; raw provider payloads are never streamed or logged as user-facing errors.
