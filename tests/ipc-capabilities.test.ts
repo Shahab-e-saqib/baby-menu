@@ -297,6 +297,24 @@ describe("capabilities IPC", () => {
     expect(settings.removeAgent).toHaveBeenCalledWith("gemini");
   });
 
+  it("forwards renderer cancellation to the active agent turn", async () => {
+    const { registerIpcHandlers } = await import("../src/main/ipc");
+    const cancel = vi.fn(async () => true);
+    const agentRuntime = {
+      send: vi.fn(),
+      cancel,
+      save: vi.fn(),
+      rollback: vi.fn(),
+      currentSessionSnapshot: vi.fn(),
+      currentTurn: vi.fn(),
+    };
+
+    registerIpcHandlers("/repo", agentRuntime);
+
+    await expect(handlers.get("baby-menu:agent:cancel")?.({})).resolves.toBe(true);
+    expect(cancel).toHaveBeenCalledExactlyOnceWith();
+  });
+
   it("rejects invalid execution modes at the IPC boundary", async () => {
     const { registerIpcHandlers } = await import("../src/main/ipc");
     const agentRuntime = { send: vi.fn(), save: vi.fn(), rollback: vi.fn(), currentSessionSnapshot: vi.fn(), currentTurn: vi.fn() };

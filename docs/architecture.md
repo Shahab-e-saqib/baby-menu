@@ -43,6 +43,7 @@ An unchanged `server.ts` module instance stays alive across invokes and backgrou
   Codex still reuses only the top-level `model` from `$CODEX_HOME/config.toml` (or `~/.codex/config.toml`) so `--ignore-user-config` does not force an unsupported default.
 - **Terminal failure semantics.**
   CLI, authentication, rate-limit, and provider failures reject through ACP with typed, bounded messages; raw provider payloads are never streamed or logged as user-facing errors.
+  The preload bridge exposes `agent.cancel()` so a renderer can forward cancellation to the active ACP turn instead of only abandoning its local request.
   Baby Menu also treats a completed ACP refusal as a failed editing turn, records failed diagnostics and telemetry, and strips nested transport error wrappers before displaying the safe message.
 - **Stale session recovery.**
   If a restart leaves a persisted ACP session an adapter cannot resume, Baby Menu records the failed attempt, deletes the stale record, and retries once with a fresh session.
