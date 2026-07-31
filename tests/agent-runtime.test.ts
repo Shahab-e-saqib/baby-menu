@@ -55,6 +55,19 @@ function fakeTurn({
 }
 
 describe("agent runtime defaults", () => {
+  it.each([
+    ["claude", "Claude Code", "Claude Code"],
+    ["codex", "Codex", "Codex"],
+  ])("fails before adapter spawn for a persisted unavailable %s selection", async (agentName, label, cli) => {
+    const runtime = new BabyMenuAgentRuntime("/repo", {
+      agentName,
+      agentAvailability: { [agentName]: false },
+    });
+    await expect(runtime.send("hello")).rejects.toThrow(
+      `${label} is unavailable because its CLI was not found. Install the ${cli} CLI or add it to the Windows PATH, then restart Baby Menu.`,
+    );
+  });
+
   it("honors BABY_MENU_AGENT before auto-detecting local agents", () => {
     expect(
       resolveDefaultAgentName({

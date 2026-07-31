@@ -317,6 +317,7 @@ export async function startBabyMenuApp(): Promise<void> {
     agentName: persistedPreferences.agentName,
     registryOverrides: Object.keys(agentCatalog.overrides).length > 0 ? agentCatalog.overrides : undefined,
     telemetry,
+    agentAvailability: Object.fromEntries(agentCatalog.options().map((agent) => [agent.name, agent.available])),
     paths: {
       extensionsDir: paths.extensionsDir,
       agentStateDir: paths.agentStateDir,

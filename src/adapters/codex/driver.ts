@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type * as schema from "@agentclientprotocol/sdk";
-import { AdapterTurnError, type SessionDriver, type UpdateSink } from "../shared/types.js";
+import { AdapterTurnError, providerCliStartError, type SessionDriver, type UpdateSink } from "../shared/types.js";
 import { LineReader } from "../shared/line-reader.js";
 import { logDebug, logError } from "../shared/log.js";
 import { childEnv } from "../shared/child-env.js";
@@ -167,9 +167,9 @@ export class CodexDriver implements SessionDriver {
         transportError = new AdapterTurnError("CLI_START_FAILED", "Codex CLI could not receive the prompt.");
         terminateChild();
       });
-      child.on("error", () => {
+      child.on("error", (error) => {
         if (cancelled) settle("cancelled");
-        else fail(new AdapterTurnError("CLI_START_FAILED", "Codex CLI could not be started."));
+        else fail(providerCliStartError("Codex", error));
       });
       child.on("exit", (code) => {
         logDebug(SCOPE, "codex exec exited", code);

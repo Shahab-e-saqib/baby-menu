@@ -111,6 +111,23 @@ describe("settings view", () => {
     expect(screen.queryByText("launch at system start")).toBeNull();
   });
 
+  it("keeps both unavailable built-ins visible with provider-specific install guidance", async () => {
+    installBabyMenuApi({
+      agentName: "claude",
+      agents: [
+        { name: "claude", label: "Claude Code", available: false, installHint: "Install the Claude Code CLI, then restart Baby Menu." },
+        { name: "codex", label: "Codex", available: false, installHint: "Install the Codex CLI, then restart Baby Menu." },
+      ],
+    });
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "open settings" }));
+
+    expect((await screen.findByRole("radio", { name: /Claude Code/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect((await screen.findByRole("radio", { name: /Codex/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("Install the Claude Code CLI, then restart Baby Menu.")).toBeTruthy();
+    expect(screen.getByText("Install the Codex CLI, then restart Baby Menu.")).toBeTruthy();
+  });
+
   it("shows unavailable agents disabled with an install hint", async () => {
     installBabyMenuApi({
       agentName: "claude",

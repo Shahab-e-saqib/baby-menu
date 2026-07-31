@@ -26,6 +26,8 @@ export type BabyMenuAgentRuntimeOptions = {
   requestTimeoutMs?: number;
   paths?: BabyMenuAgentRuntimePaths;
   telemetry?: TelemetryClient;
+  /** Startup availability probe for built-ins; prevents stale persisted selections from spawning adapters. */
+  agentAvailability?: Record<string, boolean>;
 };
 
 export type BabyMenuAgentRuntimePaths = {
@@ -342,6 +344,7 @@ export class BabyMenuAgentRuntime {
   private readonly requestTimeoutMs: number;
   private readonly paths: BabyMenuAgentRuntimePaths | undefined;
   private readonly telemetry: TelemetryClient | undefined;
+  private readonly agentAvailability: Record<string, boolean> | undefined;
 
   constructor(
     private readonly rootDir: string,
@@ -355,6 +358,7 @@ export class BabyMenuAgentRuntime {
     this.requestTimeoutMs = typeof options === "string" ? resolveAgentTimeoutMs() : options.requestTimeoutMs ?? resolveAgentTimeoutMs();
     this.paths = typeof options === "string" ? undefined : options.paths;
     this.telemetry = typeof options === "string" ? undefined : options.telemetry;
+    this.agentAvailability = typeof options === "string" ? undefined : options.agentAvailability;
   }
 
   get session(): AgentChangeSession | null {
@@ -446,6 +450,17 @@ export class BabyMenuAgentRuntime {
   }
 
   private async runSend(prompt: string, options: BabyMenuAgentRuntimeSendOptions = {}): Promise<AgentChatResult> {
+    const availability = this.agentAvailability?.[this.agentName];
+    if (availability === false) {
+      const label = this.agentName === "codex" ? "Codex" : this.agentName === "claude" ? "Claude Code" : this.agentName;
+      const cli = this.agentName === "codex" ? "Codex" : "Claude Code";
+      throw new AgentTurnFailedError({
+        code: "CLI_NOT_FOUND",
+        detailCode: "CLI_NOT_FOUND",
+        message: `${label} is unavailable because its CLI was not found. Install the ${cli} CLI or add it to the Windows PATH, then restart Baby Menu.`,
+        retryable: false,
+      });
+    }
     const agentCwd = await this.ensureAgentRuntimeCwd();
     const changeSession = await this.beginChangeSession(agentCwd);
     this.activeSession = changeSession;
