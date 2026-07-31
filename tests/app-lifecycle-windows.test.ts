@@ -83,7 +83,7 @@ const runtimeHarness = vi.hoisted(() => {
     currentAgent: "claude",
     agentSwitchDisabledReason: undefined,
     setAgent: vi.fn(async () => undefined),
-    setExecutionMode: vi.fn(async () => undefined),
+    setExecutionMode: vi.fn<() => Promise<void>>(async () => undefined),
     setRegistryOverrides: vi.fn(),
   };
   return {
