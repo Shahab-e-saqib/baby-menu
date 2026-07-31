@@ -29,6 +29,7 @@ export type BabyMenuAgentRuntimeOptions = {
   /** Startup availability probe for built-ins; prevents stale persisted selections from spawning adapters. */
   agentAvailability?: Record<string, boolean>;
   executionMode?: "native" | "wsl";
+  executionModes?: Record<string, "native" | "wsl">;
   wslDistribution?: string;
 };
 
@@ -363,7 +364,10 @@ export class BabyMenuAgentRuntime {
     this.paths = typeof options === "string" ? undefined : options.paths;
     this.telemetry = typeof options === "string" ? undefined : options.telemetry;
     this.agentAvailability = typeof options === "string" ? undefined : options.agentAvailability;
-    this.executionMode = typeof options === "string" ? "native" : options.executionMode ?? "native";
+    this.executionMode =
+      typeof options === "string"
+        ? "native"
+        : options.executionMode ?? options.executionModes?.[this.agentName] ?? "native";
     this.wslDistribution = typeof options === "string" ? "Ubuntu" : options.wslDistribution ?? "Ubuntu";
   }
 

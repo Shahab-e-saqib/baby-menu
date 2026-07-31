@@ -1,6 +1,48 @@
+import { spawnSync } from "node:child_process";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { decodeWslListOutput, listWslDistributions, validateWslLaunch, windowsPathToWsl } from "../src/main/wsl-cli";
 import { resolveDriverSpawn } from "../src/adapters/shared/platform-spawn";
+
+async function proveLoginOnlyProvider(provider: "claude" | "codex", relativeBinDir: string): Promise<void> {
+  const home = await mkdtemp(join(tmpdir(), `baby-menu-${provider}-login-`));
+  try {
+    const binDir = join(home, ...relativeBinDir.split("/"));
+    await mkdir(binDir, { recursive: true });
+    await writeFile(join(home, ".bash_profile"), `export PATH="$HOME/${relativeBinDir}:$PATH"\n`);
+    const executable = join(binDir, provider);
+    await writeFile(executable, "#!/bin/sh\nprintf '%s\\n' \"$*\"\n");
+    await chmod(executable, 0o755);
+
+    const run = vi.fn(async (args: string[]) => {
+      if (args[0] === "--list") return { status: 0, stdout: Buffer.from("Ubuntu\n") };
+      const executableIndex = args.indexOf("--exec");
+      if (args[executableIndex + 1] === "true") return { status: 0, stdout: Buffer.alloc(0) };
+      const result = spawnSync(args[executableIndex + 1]!, args.slice(executableIndex + 2), {
+        env: { ...process.env, HOME: home, PATH: "/usr/bin:/bin" },
+      });
+      return { status: result.status, stdout: result.stdout, error: result.error };
+    });
+    await expect(validateWslLaunch("Ubuntu", provider, "C:\\workspace", run)).resolves.toBeNull();
+
+    const launch = resolveDriverSpawn(provider, ["--login-path-check"], {
+      platform: "win32",
+      cwd: "C:\\workspace",
+      env: { BABY_MENU_CLI_MODE: "wsl", BABY_MENU_WSL_DISTRIBUTION: "Ubuntu" },
+    });
+    const executableIndex = launch.args.indexOf("--exec");
+    const result = spawnSync(launch.args[executableIndex + 1]!, launch.args.slice(executableIndex + 2), {
+      env: { ...process.env, HOME: home, PATH: "/usr/bin:/bin" },
+      encoding: "utf8",
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("--login-path-check");
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+}
 
 describe("WSL CLI bridge boundaries", () => {
   it("translates drive-letter workspaces without shell text", () => {
@@ -70,6 +112,14 @@ describe("WSL CLI bridge boundaries", () => {
     expect(launch.args).toContain('exec "$0" "$@"');
     expect(launch.args).toContain("codex");
     expect(launch.args.join(" ")).not.toContain("login-only".replace("login-only", ";"));
+  });
+
+  it("validates and launches Claude from a login-only ~/.local/bin", async () => {
+    await proveLoginOnlyProvider("claude", ".local/bin");
+  });
+
+  it("validates and launches Codex from a login-only NVM bin", async () => {
+    await proveLoginOnlyProvider("codex", ".nvm/versions/node/v22/bin");
   });
 
   it("keeps hostile distribution names as an argument boundary", () => {

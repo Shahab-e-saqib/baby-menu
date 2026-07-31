@@ -319,7 +319,7 @@ export async function startBabyMenuApp(): Promise<void> {
     registryOverrides: Object.keys(agentCatalog.overrides).length > 0 ? agentCatalog.overrides : undefined,
     telemetry,
     agentAvailability: Object.fromEntries(agentCatalog.options().map((agent) => [agent.name, agent.available])),
-    executionMode: persistedPreferences.agentModes?.[persistedPreferences.agentName ?? "claude"] ?? "native",
+    executionModes: persistedPreferences.agentModes,
     wslDistribution: persistedPreferences.wslDistribution ?? "Ubuntu",
     paths: {
       extensionsDir: paths.extensionsDir,

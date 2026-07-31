@@ -77,6 +77,22 @@ describe("agent runtime defaults", () => {
     await expect(runtime.send("hello")).rejects.toThrow("WSL mode is available on Windows only");
   });
 
+  it("uses the auto-selected agent's persisted execution mode", async () => {
+    const previousAgent = process.env.BABY_MENU_AGENT;
+    process.env.BABY_MENU_AGENT = "codex";
+    try {
+      const runtime = new BabyMenuAgentRuntime("/repo", {
+        agentAvailability: { codex: false },
+        executionModes: { claude: "native", codex: "wsl" },
+      });
+      expect(runtime.currentAgent).toBe("codex");
+      await expect(runtime.send("hello")).rejects.toThrow("WSL mode is available on Windows only");
+    } finally {
+      if (previousAgent === undefined) delete process.env.BABY_MENU_AGENT;
+      else process.env.BABY_MENU_AGENT = previousAgent;
+    }
+  });
+
   it("honors BABY_MENU_AGENT before auto-detecting local agents", () => {
     expect(
       resolveDefaultAgentName({
