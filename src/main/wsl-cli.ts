@@ -78,7 +78,17 @@ export async function validateWslLaunch(distribution: string, provider: WslProvi
   if (!probe.distributions.includes(distribution)) return `The selected WSL distribution is unavailable. Select an installed distribution, then restart Baby Menu.`;
   const workspace = await run(["--distribution", distribution, "--cd", linuxCwd, "--exec", "true"]);
   if (workspace.status !== 0) return "The selected WSL distribution cannot access this workspace. Switch to Native mode or enable the workspace mount in WSL.";
-  const providerProbe = await run(["--distribution", distribution, "--cd", linuxCwd, "--exec", "which", provider]);
+  const providerProbe = await run([
+    "--distribution",
+    distribution,
+    "--cd",
+    linuxCwd,
+    "--exec",
+    "/bin/bash",
+    "-lic",
+    'command -v "$0" >/dev/null 2>&1',
+    provider,
+  ]);
   if (providerProbe.status !== 0) return `${provider === "claude" ? "Claude Code" : "Codex"} CLI was not found inside the selected WSL distribution. Install it there, then restart Baby Menu.`;
   return null;
 }

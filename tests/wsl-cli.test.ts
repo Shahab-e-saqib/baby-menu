@@ -10,7 +10,10 @@ describe("WSL CLI bridge boundaries", () => {
       cwd: "C:\\Work\\baby-menu",
       env: { BABY_MENU_CLI_MODE: "wsl", BABY_MENU_WSL_DISTRIBUTION: "Ubuntu" },
     });
-    expect(launch).toMatchObject({ command: "wsl.exe", args: ["--distribution", "Ubuntu", "--cd", "/mnt/c/Work/baby-menu", "--exec", "claude", "--json"] });
+    expect(launch).toMatchObject({
+      command: "wsl.exe",
+      args: ["--distribution", "Ubuntu", "--cd", "/mnt/c/Work/baby-menu", "--exec", "/bin/bash", "-lic", 'exec "$0" "$@"', "claude", "--json"],
+    });
     expect(launch.args.join(" ")).not.toContain("|");
   });
 
@@ -44,7 +47,29 @@ describe("WSL CLI bridge boundaries", () => {
       .mockResolvedValueOnce({ status: 0, stdout: Buffer.from("/usr/bin/claude\n") });
 
     await expect(validateWslLaunch("Ubuntu", "claude", "D:\\workspace", run)).resolves.toBeNull();
-    expect(run).toHaveBeenNthCalledWith(3, ["--distribution", "Ubuntu", "--cd", "/mnt/d/workspace", "--exec", "which", "claude"]);
+    expect(run).toHaveBeenNthCalledWith(3, [
+      "--distribution",
+      "Ubuntu",
+      "--cd",
+      "/mnt/d/workspace",
+      "--exec",
+      "/bin/bash",
+      "-lic",
+      'command -v "$0" >/dev/null 2>&1',
+      "claude",
+    ]);
+  });
+
+  it("uses a login-shell PATH without interpolating provider text", () => {
+    const launch = resolveDriverSpawn("codex", ["--model", "login-only"], {
+      platform: "win32",
+      cwd: "C:\\workspace",
+      env: { BABY_MENU_CLI_MODE: "wsl", BABY_MENU_WSL_DISTRIBUTION: "Ubuntu" },
+    });
+    expect(launch.args).toContain("/bin/bash");
+    expect(launch.args).toContain('exec "$0" "$@"');
+    expect(launch.args).toContain("codex");
+    expect(launch.args.join(" ")).not.toContain("login-only".replace("login-only", ";"));
   });
 
   it("keeps hostile distribution names as an argument boundary", () => {

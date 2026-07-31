@@ -165,7 +165,22 @@ export function resolveDriverSpawn(
     if (!linuxCwd) throw new Error("The workspace path cannot be represented inside WSL.");
     return {
       command: "wsl.exe",
-      args: ["--distribution", wslDistribution, "--cd", linuxCwd, "--exec", command, ...args],
+      // Direct wsl.exe --exec does not source the distro's login PATH. Use a
+      // fixed bash wrapper with positional boundaries so user/provider text is
+      // never interpolated into shell code; $0 is the fixed provider command
+      // and $@ carries the already-separated provider arguments.
+      args: [
+        "--distribution",
+        wslDistribution,
+        "--cd",
+        linuxCwd,
+        "--exec",
+        "/bin/bash",
+        "-lic",
+        'exec "$0" "$@"',
+        command,
+        ...args,
+      ],
       options: { windowsHide: true },
     };
   }
