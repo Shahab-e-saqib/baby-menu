@@ -15,6 +15,8 @@ Read-only or otherwise invalid targets are skipped with a log message instead of
 
 Baby Menu detects supported agents in order: Claude Code (`claude`), then Codex (`codex`).
 Both run through bundled clean-room ACP adapters that drive the authenticated local CLI without inheriting user-level settings, skills, MCP servers, or extra rules.
+Both built-ins remain visible in Settings when their CLI is unavailable, but cannot be selected until the host can find the command.
+If a previously saved selection becomes unavailable, Baby Menu stops before launching its adapter and asks you to install the CLI or add it to the system `PATH`, then restart Baby Menu.
 
 | Mechanism | Effect |
 | --- | --- |
@@ -24,6 +26,7 @@ Both run through bundled clean-room ACP adapters that drive the authenticated lo
 
 If a send fails, the popover shows bounded, actionable guidance instead of raw provider diagnostics or a generic unavailable hint.
 For built-in agents, authentication failures prompt you to run `codex login` or launch `claude` and complete sign-in before trying again.
+CLI launch failures distinguish a missing command, denied permission, and other startup failures without displaying local paths, environment details, provider stderr, or credentials.
 If the failed turn edited files before stopping, Baby Menu keeps those partial changes available for Keep or Undo; a failed turn with no file changes closes cleanly.
 
 ### Codex model exception

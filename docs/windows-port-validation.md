@@ -66,6 +66,9 @@ Item 10 records the platform-portable subset CI runs on a Windows host.
 15. **Windows taskbar-aware popover geometry** (`src/main/popover.ts`, `src/main/app.ts`) — `calculatePopoverBounds` computes the popover position against the taskbar-aware `workArea` (not the full screen) of the display nearest the tray icon.
     `tests/popover-position.test.ts` proves the popover stays within the work area on the expected side of the taskbar without launching Electron.
 
+16. **Unavailable native agent UX** (`src/main/agent-catalog.ts`, `src/main/agent-runtime.ts`, `src/adapters/shared/types.ts`) — Settings keeps Claude Code and Codex visible but disabled when their host CLI cannot be found. A persisted unavailable selection fails before the bundled adapter starts, with provider-specific install, system `PATH`, and restart guidance. If the command disappears or cannot start after the availability probe, adapter errors distinguish not-found, permission-denied, and other startup failures while withholding paths, usernames, environment values, tokens, and provider stderr.
+    `tests/agent-catalog.test.ts`, `tests/agent-runtime.test.ts`, `tests/settings-view.test.tsx`.
+
 ## Manual Windows 11 validation (evidence from WSL-interop check)
 
 A focused check ran on Windows 11 Home x64 (build 26200) through WSL interop.
@@ -137,6 +140,7 @@ Setting `ELECTRON_RUN_AS_NODE` globally in the Electron main process remains rej
 
 The manual check proves `taskkill /T /F /PID <pid>` removes a real project-local `codex.cmd` process tree (including an authenticated Codex CLI and live tool descendant through `wsl.exe`).
 A native Windows agent installation was not available.
+The installed Claude Code and Codex CLIs were available only inside WSL, which does not satisfy the native Windows host prerequisite. Baby Menu does not bridge agent execution into WSL; a native CLI must be installed and visible on the Windows system `PATH`, then Baby Menu must be restarted.
 
 **Remaining clean-Windows validation step:**
 1. On the clean VM, drive one real prompt through each natively installed supported agent and cancel/timeout it mid-turn.
@@ -150,7 +154,7 @@ Porting core ACP/change-session e2e (removing win32 skips in `tests/e2e-acp-runt
 
 ### E. Remaining out-of-scope items
 
-Update copy, recipe platform-filtering/parity, or any greenfield rewrite.
+Recipe platform-filtering/parity or any greenfield rewrite.
 
 ## Native Windows validation runner
 
