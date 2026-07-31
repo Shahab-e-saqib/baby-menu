@@ -1,5 +1,5 @@
 import { app, BrowserWindow, screen, shell, type Rectangle } from "electron";
-import { join, win32 } from "node:path";
+import { basename, join, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BabyMenuCustomAgentInput, BabyMenuSettings } from "../shared/contracts";
 import { getRepoRoot, isUncWindowsLaunch } from "../shared/paths";
@@ -279,11 +279,13 @@ export async function startBabyMenuApp(): Promise<void> {
     app.dock?.hide();
   }
 
+  // Local Baby Menu Dev bundles must never mutate the user's login items.
+  const allowOpenAtLogin = paths.isPackaged && basename(app.getPath("exe")) === "Baby Menu";
   const preferences = createPreferencesService({
     userDataDir: paths.appDataRoot,
     app,
-    defaultOpenAtLogin: paths.isPackaged,
-    allowOpenAtLogin: paths.isPackaged,
+    defaultOpenAtLogin: allowOpenAtLogin,
+    allowOpenAtLogin,
   });
   const persistedPreferences = await preferences.apply();
 

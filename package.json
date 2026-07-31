@@ -1,6 +1,6 @@
 {
   "name": "baby-menu",
-  "version": "0.1.21",
+  "version": "0.1.24",
   "description": "Menu-bar app that writes its own widgets",
   "author": "Kun Chen",
   "license": "MIT",
@@ -18,7 +18,7 @@
     "build": "electron-vite build && node scripts/build-adapters.mjs",
     "generate:contracts": "node scripts/generate-extension-dts.mjs",
     "generate:windows-icons": "node scripts/generate-windows-icons.mjs",
-    "package:mac": "rm -rf release && pnpm build && electron-builder --mac dir --universal --config electron-builder.dev.yml && node scripts/adhoc-sign-mac-app.mjs \"release/mac-universal/Baby Menu Dev.app\"",
+    "package:mac": "rm -rf release && pnpm build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --universal --config electron-builder.dev.yml && node scripts/adhoc-sign-mac-app.mjs \"release/mac-universal/Baby Menu Dev.app\"",
     "package:win": "node -e \"require('node:fs').rmSync('release',{recursive:true,force:true})\" && pnpm build && electron-builder --win --x64 --config electron-builder.dev.yml",
     "dist:mac": "pnpm package:mac && node scripts/create-dmg.mjs \"release/mac-universal/Baby Menu Dev.app\"",
     "test": "vitest run tests",

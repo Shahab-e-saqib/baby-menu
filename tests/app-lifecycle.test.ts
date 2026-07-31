@@ -342,6 +342,11 @@ describe("startBabyMenuApp", () => {
 
   it("opts packaged app launches into opening at login by default", async () => {
     electronApp.isPackaged = true;
+    electronApp.getPath.mockImplementation((name: string) => {
+      if (name === "home") return "/home/test-user";
+      if (name === "exe") return "/Applications/Baby Menu.app/Contents/MacOS/Baby Menu";
+      return "/tmp";
+    });
     Object.defineProperty(process, "resourcesPath", {
       configurable: true,
       value: "/Applications/Baby Menu.app/Contents/Resources",
