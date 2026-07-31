@@ -296,4 +296,46 @@ describe("capabilities IPC", () => {
     await expect(handlers.get("baby-menu:settings:remove-agent")?.({}, "gemini")).resolves.toEqual(result);
     expect(settings.removeAgent).toHaveBeenCalledWith("gemini");
   });
+
+  it("forwards renderer cancellation to the active agent turn", async () => {
+    const { registerIpcHandlers } = await import("../src/main/ipc");
+    const cancel = vi.fn(async () => true);
+    const agentRuntime = {
+      send: vi.fn(),
+      cancel,
+      save: vi.fn(),
+      rollback: vi.fn(),
+      currentSessionSnapshot: vi.fn(),
+      currentTurn: vi.fn(),
+    };
+
+    registerIpcHandlers("/repo", agentRuntime);
+
+    await expect(handlers.get("baby-menu:agent:cancel")?.({})).resolves.toBe(true);
+    expect(cancel).toHaveBeenCalledExactlyOnceWith();
+  });
+
+  it("rejects invalid execution modes at the IPC boundary", async () => {
+    const { registerIpcHandlers } = await import("../src/main/ipc");
+    const agentRuntime = { send: vi.fn(), save: vi.fn(), rollback: vi.fn(), currentSessionSnapshot: vi.fn(), currentTurn: vi.fn() };
+    const result = { openAtLogin: false, agentName: "claude", agents: [] };
+    const settings = {
+      get: vi.fn(async () => result),
+      setOpenAtLogin: vi.fn(async () => result),
+      setAgent: vi.fn(async () => result),
+      addAgent: vi.fn(async () => result),
+      updateAgent: vi.fn(async () => result),
+      removeAgent: vi.fn(async () => result),
+      setAgentMode: vi.fn(async () => result),
+    };
+
+    registerIpcHandlers("/repo", agentRuntime, undefined, undefined, undefined, settings);
+
+    await expect(handlers.get("baby-menu:settings:set-agent-mode")?.({}, "claude", "automatic")).rejects.toThrow(
+      "Invalid agent execution mode.",
+    );
+    expect(settings.setAgentMode).not.toHaveBeenCalled();
+    await expect(handlers.get("baby-menu:settings:set-agent-mode")?.({}, "claude", "wsl")).resolves.toEqual(result);
+    expect(settings.setAgentMode).toHaveBeenCalledWith("claude", "wsl");
+  });
 });

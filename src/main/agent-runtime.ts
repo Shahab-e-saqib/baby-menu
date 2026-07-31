@@ -26,6 +26,11 @@ export type BabyMenuAgentRuntimeOptions = {
   requestTimeoutMs?: number;
   paths?: BabyMenuAgentRuntimePaths;
   telemetry?: TelemetryClient;
+  /** Startup availability probe for built-ins; prevents stale persisted selections from spawning adapters. */
+  agentAvailability?: Record<string, boolean>;
+  executionMode?: "native" | "wsl";
+  executionModes?: Record<string, "native" | "wsl">;
+  wslDistribution?: string;
 };
 
 export type BabyMenuAgentRuntimePaths = {
@@ -336,12 +341,16 @@ export class BabyMenuAgentRuntime {
   private activeSession: AgentChangeSession | null = null;
   private activeTurn = false;
   private activeTurnInfo: AgentActiveTurn | null = null;
+  private activeTurnCancel: (() => Promise<void>) | null = null;
   private agentName: string;
   private registryOverrides: Record<string, string> | undefined;
   private registryOverridesStale = false;
   private readonly requestTimeoutMs: number;
   private readonly paths: BabyMenuAgentRuntimePaths | undefined;
   private readonly telemetry: TelemetryClient | undefined;
+  private readonly agentAvailability: Record<string, boolean> | undefined;
+  private executionMode: "native" | "wsl";
+  private wslDistribution: string;
 
   constructor(
     private readonly rootDir: string,
@@ -355,6 +364,12 @@ export class BabyMenuAgentRuntime {
     this.requestTimeoutMs = typeof options === "string" ? resolveAgentTimeoutMs() : options.requestTimeoutMs ?? resolveAgentTimeoutMs();
     this.paths = typeof options === "string" ? undefined : options.paths;
     this.telemetry = typeof options === "string" ? undefined : options.telemetry;
+    this.agentAvailability = typeof options === "string" ? undefined : options.agentAvailability;
+    this.executionMode =
+      typeof options === "string"
+        ? "native"
+        : options.executionMode ?? options.executionModes?.[this.agentName] ?? "native";
+    this.wslDistribution = typeof options === "string" ? "Ubuntu" : options.wslDistribution ?? "Ubuntu";
   }
 
   get session(): AgentChangeSession | null {
@@ -414,6 +429,13 @@ export class BabyMenuAgentRuntime {
    * runtime with discardPersistentState drops the persisted "baby-menu-agent-chat"
    * session so the next send() starts the new agent with a fresh conversation.
    */
+  async setExecutionMode(mode: "native" | "wsl", distribution = this.wslDistribution): Promise<void> {
+    if (this.agentSwitchDisabledReason) throw new Error(this.agentSwitchDisabledReason);
+    this.executionMode = mode;
+    this.wslDistribution = distribution.trim() || "Ubuntu";
+    await this.closeRuntime("execution-mode-change", true, true);
+  }
+
   async setAgent(name: string): Promise<void> {
     const next = name.trim();
     if (!next || next === this.agentName) return;
@@ -425,6 +447,12 @@ export class BabyMenuAgentRuntime {
     this.activeSession = null;
     this.agentName = next;
     this.telemetry?.track("agent_switch", { agent: telemetryAgentName(next) });
+  }
+
+  async cancel(): Promise<boolean> {
+    if (!this.activeTurnCancel) return false;
+    await this.activeTurnCancel().catch(() => undefined);
+    return true;
   }
 
   async send(prompt: string, options: BabyMenuAgentRuntimeSendOptions = {}): Promise<AgentChatResult> {
@@ -442,11 +470,38 @@ export class BabyMenuAgentRuntime {
     } finally {
       this.activeTurn = false;
       this.activeTurnInfo = null;
+      this.activeTurnCancel = null;
     }
   }
 
   private async runSend(prompt: string, options: BabyMenuAgentRuntimeSendOptions = {}): Promise<AgentChatResult> {
+    const availability = this.agentAvailability?.[this.agentName];
+    if (this.executionMode === "native" && availability === false) {
+      const label = this.agentName === "codex" ? "Codex" : this.agentName === "claude" ? "Claude Code" : this.agentName;
+      const cli = this.agentName === "codex" ? "Codex" : "Claude Code";
+      throw new AgentTurnFailedError({
+        code: "CLI_NOT_FOUND",
+        detailCode: "CLI_NOT_FOUND",
+        message: `${label} is unavailable because its CLI was not found. Install the ${cli} CLI or add it to the system PATH, then restart Baby Menu.`,
+        retryable: false,
+      });
+    }
+    let wslProvider: "claude" | "codex" | undefined;
+    if (this.executionMode === "wsl") {
+      if (process.platform !== "win32") {
+        throw new AgentTurnFailedError({ code: "CLI_START_FAILED", detailCode: "WSL_UNAVAILABLE", message: "WSL mode is available on Windows only. Switch this agent to Native mode." });
+      }
+      if (this.agentName !== "claude" && this.agentName !== "codex") {
+        throw new AgentTurnFailedError({ code: "CLI_START_FAILED", detailCode: "WSL_UNAVAILABLE", message: "WSL mode is supported only for Claude Code and Codex. Switch this agent to Native mode." });
+      }
+      wslProvider = this.agentName;
+    }
     const agentCwd = await this.ensureAgentRuntimeCwd();
+    if (wslProvider) {
+      const { validateWslLaunch } = await import("./wsl-cli");
+      const reason = await validateWslLaunch(this.wslDistribution, wslProvider, agentCwd);
+      if (reason) throw new AgentTurnFailedError({ code: "CLI_START_FAILED", detailCode: "WSL_UNAVAILABLE", message: reason });
+    }
     const changeSession = await this.beginChangeSession(agentCwd);
     this.activeSession = changeSession;
     const telemetryAgent = telemetryAgentName(this.agentName);
@@ -529,6 +584,9 @@ export class BabyMenuAgentRuntime {
         timeoutMs: 0,
       });
 
+      this.activeTurnCancel = async () => {
+        await turn.cancel({ reason: "user" });
+      };
       const output = await this.collectTurnOutput(turn, turnLog, options);
       await turnLog.finish("completed").catch(() => undefined);
 
@@ -635,6 +693,8 @@ export class BabyMenuAgentRuntime {
 
   private async closeRuntime(reason: string, discardPersistentState?: boolean, ignoreCloseError = false): Promise<void> {
     if (!this.runtime || !this.handle) {
+      delete process.env.BABY_MENU_CLI_MODE;
+      delete process.env.BABY_MENU_WSL_DISTRIBUTION;
       this.runtime = null;
       this.handle = null;
       this.registryOverridesStale = false;
@@ -645,6 +705,8 @@ export class BabyMenuAgentRuntime {
     const handle = this.handle;
     this.runtime = null;
     this.handle = null;
+    delete process.env.BABY_MENU_CLI_MODE;
+    delete process.env.BABY_MENU_WSL_DISTRIBUTION;
     this.registryOverridesStale = false;
     const close = runtime.close({ handle, reason, discardPersistentState });
     if (ignoreCloseError) {
@@ -678,6 +740,13 @@ export class BabyMenuAgentRuntime {
 
     const stateDir = this.paths?.agentStateDir ?? getAgentStateDir(this.rootDir);
     await mkdir(stateDir, { recursive: true });
+    if (process.platform === "win32" && this.executionMode === "wsl") {
+      process.env.BABY_MENU_CLI_MODE = "wsl";
+      process.env.BABY_MENU_WSL_DISTRIBUTION = this.wslDistribution;
+    } else {
+      delete process.env.BABY_MENU_CLI_MODE;
+      delete process.env.BABY_MENU_WSL_DISTRIBUTION;
+    }
     this.runtime = createAcpRuntime({
       cwd: agentCwd,
       sessionStore: createFileSessionStore({ stateDir }),

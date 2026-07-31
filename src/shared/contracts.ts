@@ -81,14 +81,20 @@ export type BabyMenuCustomAgentInput = {
   command: string;
 };
 
+export type AgentExecutionMode = "native" | "wsl";
+
 export type BabyMenuSettings = {
   openAtLogin: boolean;
   /** Name of the active embedded agent. */
   agentName: string;
   /** Present when the current runtime state prevents switching agents. */
   agentSwitchDisabledReason?: string;
-  /** Selectable agents; unavailable ones are shown disabled with an install hint. */
+  /** Selectable agents; native-unavailable ones include an install hint. */
   agents: BabyMenuAgentOption[];
+  agentModes?: Record<string, AgentExecutionMode>;
+  wslSupported?: boolean;
+  wslDistribution?: string;
+  wslDistributions?: string[];
 };
 
 // SQL bind parameters: positional (an array) or named (an object keyed by the
@@ -254,6 +260,7 @@ export type BabyMenuApi = {
   };
   agent: {
     send: (prompt: string) => Promise<AgentChatResult>;
+    cancel?: () => Promise<boolean>;
     onStatus: (listener: (status: AgentRuntimeStatus) => void) => () => void;
     // The turn currently running in the main process, or null. Lets the renderer
     // restore the in-progress run strip after the popover view is remounted (e.g.
@@ -309,6 +316,8 @@ export type BabyMenuApi = {
     updateAgent: (name: string, input: { label?: string; command: string }) => Promise<BabyMenuSettings>;
     /** Removes a custom agent. Rejects if the agent is currently active. */
     removeAgent: (name: string) => Promise<BabyMenuSettings>;
+    setAgentMode?: (agentName: string, mode: AgentExecutionMode) => Promise<BabyMenuSettings>;
+    setWslDistribution?: (distribution: string) => Promise<BabyMenuSettings>;
   };
   app: {
     /** Fully quits the Electron app from the popover shell. */

@@ -27,6 +27,27 @@ export class AdapterTurnError extends Error {
 
 type AdapterName = "Claude" | "Codex";
 
+export function providerCliStartError(agent: AdapterName, error: unknown): AdapterTurnError {
+  const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code?: unknown }).code) : "";
+  const label = agent === "Codex" ? "Codex" : "Claude Code";
+  if (code === "ENOENT") {
+    return new AdapterTurnError(
+      "CLI_START_FAILED",
+      `${label} is unavailable because its CLI was not found. Install the ${label} CLI, then restart Baby Menu.`,
+    );
+  }
+  if (code === "EACCES" || code === "EPERM") {
+    return new AdapterTurnError(
+      "CLI_START_FAILED",
+      `${label} is installed but could not be started because permission was denied. Check the CLI permissions, then restart Baby Menu.`,
+    );
+  }
+  return new AdapterTurnError(
+    "CLI_START_FAILED",
+    `${label} is installed but could not be started. Check the CLI installation, then restart Baby Menu.`,
+  );
+}
+
 export function providerTurnError(agent: AdapterName, detail: unknown): AdapterTurnError {
   const text = typeof detail === "string" ? detail : "";
   if (/\b401\b|unauthorized|authentication|not logged in|missing bearer/i.test(text)) {

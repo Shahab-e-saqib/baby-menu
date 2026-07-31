@@ -66,6 +66,10 @@ Item 10 records the platform-portable subset CI runs on a Windows host.
 15. **Windows taskbar-aware popover geometry** (`src/main/popover.ts`, `src/main/app.ts`) — `calculatePopoverBounds` computes the popover position against the taskbar-aware `workArea` (not the full screen) of the display nearest the tray icon.
     `tests/popover-position.test.ts` proves the popover stays within the work area on the expected side of the taskbar without launching Electron.
 
+16. **Unavailable native agent UX and opt-in WSL bridge** (`src/main/agent-runtime.ts`, `src/main/wsl-cli.ts`, `src/main/preferences.ts`, `src/renderer/settings/SettingsView.tsx`, `src/adapters/shared/platform-spawn.ts`, `src/adapters/shared/types.ts`) — Settings keeps Claude Code and Codex visible when their host CLI cannot be found. They remain disabled in Native mode, with provider-specific install, system `PATH`, and restart guidance, but can be selected after explicitly choosing WSL mode on Windows. Native/WSL mode persists per built-in while one selected distribution is shared; neither changes implicitly.
+    Every WSL turn checks `wsl.exe`, the exact selected distribution, drive-letter workspace translation/access, and the provider CLI through the distribution's Bash login environment before adapter launch, and rejects UNC workspaces. The adapter launches `wsl.exe` through a fixed login-shell wrapper, passing the provider command and arguments positionally so prompts, paths, and distribution names are never interpolated into shell text. Existing stdin streaming, cancellation, and descendant cleanup remain intact. Native and WSL failures withhold paths, usernames, environment values, tokens, and provider stderr.
+    `tests/agent-catalog.test.ts`, `tests/agent-runtime.test.ts`, `tests/wsl-cli.test.ts`, `tests/preferences.test.ts`, `tests/settings-view.test.tsx`, `tests/app-lifecycle-windows.test.ts`, `tests/adapter-claude-driver.test.ts`, `tests/adapter-codex-driver.test.ts`, `tests/ipc-capabilities.test.ts`.
+
 ## Manual Windows 11 validation (evidence from WSL-interop check)
 
 A focused check ran on Windows 11 Home x64 (build 26200) through WSL interop.
@@ -137,6 +141,7 @@ Setting `ELECTRON_RUN_AS_NODE` globally in the Electron main process remains rej
 
 The manual check proves `taskkill /T /F /PID <pid>` removes a real project-local `codex.cmd` process tree (including an authenticated Codex CLI and live tool descendant through `wsl.exe`).
 A native Windows agent installation was not available.
+The installed Claude Code and Codex CLIs were available only inside WSL, so this evidence does not satisfy the native Windows host prerequisite. Baby Menu now supports an explicit per-agent WSL mode with preflight validation, but Native mode still requires the provider CLI on the Windows system `PATH` and an app restart after installation.
 
 **Remaining clean-Windows validation step:**
 1. On the clean VM, drive one real prompt through each natively installed supported agent and cancel/timeout it mid-turn.
@@ -148,9 +153,18 @@ The `windows` CI job runs 39 test files spanning platform units, extension infra
 Many specs execute `/bin/bash`/`/bin/sh`, rely on Unix fixtures (shebangs, `chmod`, symlinks), or are explicitly `skipIf(win32)` — 10 `skipIf(win32)` guards cover symlink, chmod, and Nix-store-specific test cases across `extension-seeder`, `extension-module-compiler`, `widget-tailwind-css`, `layout-module-registry`, and `dev-extension-change-session`.
 Porting core ACP/change-session e2e (removing win32 skips in `tests/e2e-acp-runtime.test.ts`) is not done here.
 
-### E. Remaining out-of-scope items
+### E. Native Windows WSL-mode UI and live-turn validation
 
-Update copy, recipe platform-filtering/parity, or any greenfield rewrite.
+The WSL bridge and Settings state are covered by cross-platform unit tests, but the new controls and a real provider turn have not been exercised in a packaged app on a native Windows desktop.
+
+**Remaining native-Windows validation step:**
+1. With the provider CLIs absent from the Windows host `PATH` but installed in a selected WSL distribution, confirm Settings keeps both built-ins visible, shows their Native guidance, persists independent Native/WSL choices plus the shared distribution, and never changes either choice implicitly.
+2. Drive and cancel one real WSL turn through each built-in, then confirm the intended workspace was used and no provider or tool descendant survives.
+3. From a UNC workspace and with an unavailable distribution/provider, confirm preflight stops before adapter launch with bounded guidance that exposes no local path, username, environment value, token, or provider stderr.
+
+### F. Remaining out-of-scope items
+
+Recipe platform-filtering/parity or any greenfield rewrite.
 
 ## Native Windows validation runner
 

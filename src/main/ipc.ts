@@ -2,6 +2,7 @@ import { app as electronApp, ipcMain } from "electron";
 import { pathToFileURL } from "node:url";
 import type {
   AgentActiveTurn,
+  AgentExecutionMode,
   AgentChatResult,
   BabyMenuCustomAgentInput,
   BabyMenuSettings,
@@ -28,6 +29,7 @@ type AgentRuntimeFacade = Pick<
   BabyMenuAgentRuntime,
   "save" | "rollback" | "currentSessionSnapshot" | "currentTurn"
 > & {
+  cancel?: () => Promise<boolean>;
   send: (prompt: string, options?: BabyMenuAgentRuntimeSendOptions) => Promise<AgentChatResult>;
 };
 
@@ -44,6 +46,8 @@ type SettingsController = {
   addAgent: (input: BabyMenuCustomAgentInput) => Promise<BabyMenuSettings> | BabyMenuSettings;
   updateAgent: (name: string, input: { label?: string; command: string }) => Promise<BabyMenuSettings> | BabyMenuSettings;
   removeAgent: (name: string) => Promise<BabyMenuSettings> | BabyMenuSettings;
+  setAgentMode?: (agentName: string, mode: AgentExecutionMode) => Promise<BabyMenuSettings> | BabyMenuSettings;
+  setWslDistribution?: (distribution: string) => Promise<BabyMenuSettings> | BabyMenuSettings;
 };
 
 type AppController = {
@@ -69,12 +73,14 @@ export function registerIpcHandlers(
     getVisibility: () => ({ visible: false }),
   },
   settings: SettingsController = {
-    get: () => ({ openAtLogin: false, agentName: "", agents: [] }),
-    setOpenAtLogin: (openAtLogin) => ({ openAtLogin, agentName: "", agents: [] }),
-    setAgent: (agentName) => ({ openAtLogin: false, agentName, agents: [] }),
-    addAgent: () => ({ openAtLogin: false, agentName: "", agents: [] }),
-    updateAgent: () => ({ openAtLogin: false, agentName: "", agents: [] }),
-    removeAgent: () => ({ openAtLogin: false, agentName: "", agents: [] }),
+    get: () => ({ openAtLogin: false, agentName: "", agents: [], agentModes: {}, wslDistribution: "Ubuntu" }),
+    setOpenAtLogin: (openAtLogin) => ({ openAtLogin, agentName: "", agents: [], agentModes: {}, wslDistribution: "Ubuntu" }),
+    setAgent: (agentName) => ({ openAtLogin: false, agentName, agents: [], agentModes: {}, wslDistribution: "Ubuntu" }),
+    addAgent: () => ({ openAtLogin: false, agentName: "", agents: [], agentModes: {}, wslDistribution: "Ubuntu" }),
+    updateAgent: () => ({ openAtLogin: false, agentName: "", agents: [], agentModes: {}, wslDistribution: "Ubuntu" }),
+    removeAgent: () => ({ openAtLogin: false, agentName: "", agents: [], agentModes: {}, wslDistribution: "Ubuntu" }),
+    setAgentMode: () => ({ openAtLogin: false, agentName: "", agents: [], agentModes: {}, wslDistribution: "Ubuntu" }),
+    setWslDistribution: () => ({ openAtLogin: false, agentName: "", agents: [], agentModes: {}, wslDistribution: "Ubuntu" }),
   },
   appController: AppController = { quit: () => electronApp.quit() },
   runtimeOptions: IpcRuntimeOptions = {},
@@ -95,6 +101,10 @@ export function registerIpcHandlers(
 
   ipcMain.handle("baby-menu:agent:active-turn", async (): Promise<AgentActiveTurn | null> => {
     return agentRuntime.currentTurn();
+  });
+
+  ipcMain.handle("baby-menu:agent:cancel", async (): Promise<boolean> => {
+    return (await agentRuntime.cancel?.()) ?? false;
   });
 
   ipcMain.handle("baby-menu:git:save", async (_event, message?: string): Promise<GitActionResult> => {
@@ -177,6 +187,17 @@ export function registerIpcHandlers(
 
   ipcMain.handle("baby-menu:settings:remove-agent", async (_event, name: string) => {
     return settings.removeAgent(name);
+  });
+
+  ipcMain.handle("baby-menu:settings:set-agent-mode", async (_event, agentName: string, mode: AgentExecutionMode) => {
+    if (!settings.setAgentMode) throw new Error("Agent execution modes are unavailable.");
+    if (mode !== "native" && mode !== "wsl") throw new Error("Invalid agent execution mode.");
+    return settings.setAgentMode(agentName, mode);
+  });
+
+  ipcMain.handle("baby-menu:settings:set-wsl-distribution", async (_event, distribution: string) => {
+    if (!settings.setWslDistribution) throw new Error("WSL settings are unavailable.");
+    return settings.setWslDistribution(distribution);
   });
 
   ipcMain.handle("baby-menu:app:quit", async () => {

@@ -18,6 +18,14 @@ describe("agent-catalog", () => {
     expect(DEFAULT_AGENTS.map((agent) => agent.adapter)).toEqual(["claude", "codex"]);
   });
 
+  it("keeps both built-ins in Settings when both native CLIs are unavailable", () => {
+    const options = toAgentOptions(DEFAULT_AGENTS, () => false);
+    expect(options).toEqual([
+      expect.objectContaining({ name: "claude", label: "Claude Code", available: false }),
+      expect.objectContaining({ name: "codex", label: "Codex", available: false }),
+    ]);
+  });
+
   it("derives Settings availability by probing each agent's wrapped CLI", () => {
     const available = (commands: string[]) => {
       const set = new Set(commands);

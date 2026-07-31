@@ -15,6 +15,8 @@ Read-only or otherwise invalid targets are skipped with a log message instead of
 
 Baby Menu detects supported agents in order: Claude Code (`claude`), then Codex (`codex`).
 Both run through bundled clean-room ACP adapters that drive the authenticated local CLI without inheriting user-level settings, skills, MCP servers, or extra rules.
+Both built-ins remain visible in Settings when their native CLI is unavailable. In Native mode they cannot be selected until the host can find the command.
+If a previously saved Native selection becomes unavailable, Baby Menu stops before launching its adapter and asks you to install the CLI or add it to the system `PATH`, then restart Baby Menu.
 
 | Mechanism | Effect |
 | --- | --- |
@@ -22,8 +24,12 @@ Both run through bundled clean-room ACP adapters that drive the authenticated lo
 | `BABY_MENU_AGENT=<name>` | Override auto-detection before a preference is saved. |
 | `agents.json` | Override or append catalog entries manually. |
 
+On Windows, each built-in also has an explicit Native/WSL setting. WSL mode is opt-in per agent; Baby Menu never switches execution mode or distribution automatically. Settings persists one WSL distribution shared by both built-ins and lists installed distributions when `wsl.exe` is available.
+Before every WSL turn, Baby Menu verifies `wsl.exe`, the selected distribution, access to the translated workspace, and the provider CLI through that distribution's Bash login environment. This lets WSL installations found only through login-configured paths such as `~/.local/bin` or an NVM directory work without adding them to the Windows system `PATH`. Drive-letter workspaces are translated to `/mnt/<drive>/...`; UNC workspaces are rejected. A failed preflight stops before adapter launch with bounded guidance and does not expose paths, usernames, environment values, tokens, or provider stderr.
+
 If a send fails, the popover shows bounded, actionable guidance instead of raw provider diagnostics or a generic unavailable hint.
 For built-in agents, authentication failures prompt you to run `codex login` or launch `claude` and complete sign-in before trying again.
+CLI launch failures distinguish a missing command, denied permission, and other startup failures without displaying local paths, environment details, provider stderr, or credentials.
 If the failed turn edited files before stopping, Baby Menu keeps those partial changes available for Keep or Undo; a failed turn with no file changes closes cleanly.
 
 ### Codex model exception

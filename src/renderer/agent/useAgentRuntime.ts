@@ -252,6 +252,7 @@ function failureReason(error: unknown): string | null {
   const message = error.message
     .replace(/^Error invoking remote method '[^']*':\s*/, "")
     .replace(/^(?:(?:[A-Za-z][A-Za-z0-9]*Error|Error):\s*)+/, "")
+    .replace(/^Internal error:\s*/i, "")
     .trim();
   return message || null;
 }

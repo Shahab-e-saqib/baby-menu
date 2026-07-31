@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { BabyMenuCustomAgentInput, BabyMenuSettings } from "../shared/contracts";
 import { getRepoRoot, isUncWindowsLaunch } from "../shared/paths";
 import { createAgentCatalogController } from "./agent-catalog-controller";
+import { listWslDistributions } from "./wsl-cli";
 import { BabyMenuAgentRuntime, commandExists } from "./agent-runtime";
 import { resolveBabyMenuRuntimePaths } from "./app-paths";
 import { seedExtensionWorkspace } from "./extension-seeder";
@@ -317,6 +318,9 @@ export async function startBabyMenuApp(): Promise<void> {
     agentName: persistedPreferences.agentName,
     registryOverrides: Object.keys(agentCatalog.overrides).length > 0 ? agentCatalog.overrides : undefined,
     telemetry,
+    agentAvailability: Object.fromEntries(agentCatalog.options().map((agent) => [agent.name, agent.available])),
+    executionModes: persistedPreferences.agentModes,
+    wslDistribution: persistedPreferences.wslDistribution ?? "Ubuntu",
     paths: {
       extensionsDir: paths.extensionsDir,
       agentStateDir: paths.agentStateDir,
@@ -328,13 +332,25 @@ export async function startBabyMenuApp(): Promise<void> {
   const notify = createNotifier();
 
   async function buildSettings(): Promise<BabyMenuSettings> {
+    const wslProbe = process.platform === "win32" ? await listWslDistributions() : null;
     const current = await preferences.get();
     return {
       openAtLogin: current.openAtLogin,
       agentName: agentRuntime.currentAgent,
       agentSwitchDisabledReason: agentRuntime.agentSwitchDisabledReason,
       agents: agentCatalog.options(),
+      agentModes: current.agentModes ?? {},
+      wslSupported: process.platform === "win32",
+      wslDistribution: current.wslDistribution ?? "Ubuntu",
+      wslDistributions: wslProbe?.ok ? wslProbe.distributions : [],
     };
+  }
+
+  let agentSettingsMutation = Promise.resolve();
+  function serializeAgentSettingsMutation<T>(mutation: () => Promise<T>): Promise<T> {
+    const result = agentSettingsMutation.then(mutation, mutation);
+    agentSettingsMutation = result.then(() => undefined, () => undefined);
+    return result;
   }
 
   const settingsController = {
@@ -344,8 +360,27 @@ export async function startBabyMenuApp(): Promise<void> {
       return buildSettings();
     },
     async setAgent(agentName: string) {
-      await agentRuntime.setAgent(agentName);
-      await preferences.setAgent(agentName);
+      await serializeAgentSettingsMutation(async () => {
+        await agentRuntime.setAgent(agentName);
+        const nextPreferences = await preferences.get();
+        await agentRuntime.setExecutionMode(nextPreferences.agentModes?.[agentName] ?? "native", nextPreferences.wslDistribution ?? "Ubuntu");
+        await preferences.setAgent(agentName);
+      });
+      return buildSettings();
+    },
+    async setAgentMode(agentName: string, mode: "native" | "wsl") {
+      await serializeAgentSettingsMutation(async () => {
+        if (agentName === agentRuntime.currentAgent) await agentRuntime.setExecutionMode(mode, (await preferences.get()).wslDistribution ?? "Ubuntu");
+        await preferences.setAgentMode(agentName, mode);
+      });
+      return buildSettings();
+    },
+    async setWslDistribution(distribution: string) {
+      await serializeAgentSettingsMutation(async () => {
+        const current = await preferences.get();
+        if ((current.agentModes?.[agentRuntime.currentAgent] ?? "native") === "wsl") await agentRuntime.setExecutionMode("wsl", distribution);
+        await preferences.setWslDistribution(distribution);
+      });
       return buildSettings();
     },
     async addAgent(input: BabyMenuCustomAgentInput) {

@@ -5,6 +5,8 @@ export type BabyMenuPreferences = {
   openAtLogin: boolean;
   /** Persisted embedded-agent choice; absent until the user picks one. */
   agentName?: string;
+  agentModes?: Record<string, "native" | "wsl">;
+  wslDistribution?: string;
 };
 
 type LoginItemApp = {
@@ -15,6 +17,8 @@ export type PreferencesService = {
   get: () => Promise<BabyMenuPreferences>;
   setOpenAtLogin: (openAtLogin: boolean) => Promise<BabyMenuPreferences>;
   setAgent: (agentName: string) => Promise<BabyMenuPreferences>;
+  setAgentMode: (agentName: string, mode: "native" | "wsl") => Promise<BabyMenuPreferences>;
+  setWslDistribution: (distribution: string) => Promise<BabyMenuPreferences>;
   apply: () => Promise<BabyMenuPreferences>;
 };
 
@@ -35,9 +39,15 @@ export function createPreferencesService({
 
   function normalizePreferences(preferences: BabyMenuPreferences): BabyMenuPreferences {
     const agentName = preferences.agentName?.trim();
+    const agentModes = Object.fromEntries(
+      Object.entries(preferences.agentModes ?? {}).filter(([name, mode]) => name.trim() && (mode === "native" || mode === "wsl")),
+    ) as Record<string, "native" | "wsl">;
+    const wslDistribution = preferences.wslDistribution?.trim();
     return {
       openAtLogin: allowOpenAtLogin && preferences.openAtLogin,
       ...(agentName ? { agentName } : {}),
+      ...(Object.keys(agentModes).length ? { agentModes } : {}),
+      ...(wslDistribution ? { wslDistribution } : {}),
     };
   }
 
@@ -49,7 +59,12 @@ export function createPreferencesService({
   async function readPreferences(): Promise<BabyMenuPreferences> {
     try {
       const parsed = JSON.parse(await readFile(filePath, "utf8")) as Partial<BabyMenuPreferences>;
-      return normalizePreferences({ openAtLogin: parsed.openAtLogin ?? defaultOpenAtLogin, agentName: parsed.agentName });
+      return normalizePreferences({
+        openAtLogin: parsed.openAtLogin ?? defaultOpenAtLogin,
+        agentName: parsed.agentName,
+        agentModes: parsed.agentModes,
+        wslDistribution: parsed.wslDistribution,
+      });
     } catch {
       return normalizePreferences({ openAtLogin: defaultOpenAtLogin });
     }
@@ -61,17 +76,34 @@ export function createPreferencesService({
     return preferences;
   }
 
+  let preferenceMutation = Promise.resolve();
+  function updatePreferences(
+    update: (current: BabyMenuPreferences) => BabyMenuPreferences,
+    afterWrite?: (preferences: BabyMenuPreferences) => void,
+  ): Promise<BabyMenuPreferences> {
+    const result = preferenceMutation.then(async () => {
+      const current = await readPreferences();
+      const preferences = await writePreferences(normalizePreferences(update(current)));
+      afterWrite?.(preferences);
+      return preferences;
+    });
+    preferenceMutation = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
   return {
     get: readPreferences,
-    async setOpenAtLogin(openAtLogin) {
-      const current = await readPreferences();
-      const preferences = await writePreferences(normalizePreferences({ ...current, openAtLogin }));
-      applyLoginItemSettings(preferences);
-      return preferences;
+    setOpenAtLogin(openAtLogin) {
+      return updatePreferences((current) => ({ ...current, openAtLogin }), applyLoginItemSettings);
     },
-    async setAgent(agentName) {
-      const current = await readPreferences();
-      return writePreferences(normalizePreferences({ ...current, agentName }));
+    setAgent(agentName) {
+      return updatePreferences((current) => ({ ...current, agentName }));
+    },
+    setAgentMode(agentName, mode) {
+      return updatePreferences((current) => ({ ...current, agentModes: { ...current.agentModes, [agentName]: mode } }));
+    },
+    setWslDistribution(distribution) {
+      return updatePreferences((current) => ({ ...current, wslDistribution: distribution }));
     },
     async apply() {
       const preferences = await readPreferences();

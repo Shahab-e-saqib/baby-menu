@@ -82,6 +82,36 @@ describe("preferences service", () => {
     await expect(service.get()).resolves.not.toHaveProperty("agentName");
   });
 
+  it("persists per-agent WSL mode and the shared distribution", async () => {
+    const userDataDir = await mkdtemp(join(tmpdir(), "baby-menu-prefs-"));
+    tempDirs.push(userDataDir);
+    const service = createPreferencesService({ userDataDir, app: { setLoginItemSettings: vi.fn() }, defaultOpenAtLogin: false });
+
+    await service.setAgentMode("claude", "wsl");
+    await service.setWslDistribution("Ubuntu");
+    await expect(service.get()).resolves.toMatchObject({ agentModes: { claude: "wsl" }, wslDistribution: "Ubuntu" });
+  });
+
+  it("preserves concurrent preference mutations", async () => {
+    const userDataDir = await mkdtemp(join(tmpdir(), "baby-menu-prefs-"));
+    tempDirs.push(userDataDir);
+    const service = createPreferencesService({ userDataDir, app: { setLoginItemSettings: vi.fn() } });
+    await service.setAgent("claude");
+
+    await Promise.all([
+      service.setAgentMode("claude", "wsl"),
+      service.setWslDistribution("Ubuntu"),
+      service.setOpenAtLogin(false),
+    ]);
+
+    await expect(service.get()).resolves.toEqual({
+      openAtLogin: false,
+      agentName: "claude",
+      agentModes: { claude: "wsl" },
+      wslDistribution: "Ubuntu",
+    });
+  });
+
   it("persists the chosen agent without disturbing the login preference", async () => {
     const userDataDir = await mkdtemp(join(tmpdir(), "baby-menu-prefs-"));
     tempDirs.push(userDataDir);

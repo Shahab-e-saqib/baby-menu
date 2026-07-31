@@ -55,6 +55,44 @@ function fakeTurn({
 }
 
 describe("agent runtime defaults", () => {
+  it.each([
+    ["claude", "Claude Code", "Claude Code"],
+    ["codex", "Codex", "Codex"],
+  ])("fails before adapter spawn for a persisted unavailable %s selection", async (agentName, label, cli) => {
+    const runtime = new BabyMenuAgentRuntime("/repo", {
+      agentName,
+      agentAvailability: { [agentName]: false },
+    });
+    await expect(runtime.send("hello")).rejects.toThrow(
+      `${label} is unavailable because its CLI was not found. Install the ${cli} CLI or add it to the system PATH, then restart Baby Menu.`,
+    );
+  });
+
+  it("does not apply native availability to an explicit WSL selection", async () => {
+    const runtime = new BabyMenuAgentRuntime("/repo", {
+      agentName: "claude",
+      agentAvailability: { claude: false },
+      executionMode: "wsl",
+    });
+    await expect(runtime.send("hello")).rejects.toThrow("WSL mode is available on Windows only");
+  });
+
+  it("uses the auto-selected agent's persisted execution mode", async () => {
+    const previousAgent = process.env.BABY_MENU_AGENT;
+    process.env.BABY_MENU_AGENT = "codex";
+    try {
+      const runtime = new BabyMenuAgentRuntime("/repo", {
+        agentAvailability: { codex: false },
+        executionModes: { claude: "native", codex: "wsl" },
+      });
+      expect(runtime.currentAgent).toBe("codex");
+      await expect(runtime.send("hello")).rejects.toThrow("WSL mode is available on Windows only");
+    } finally {
+      if (previousAgent === undefined) delete process.env.BABY_MENU_AGENT;
+      else process.env.BABY_MENU_AGENT = previousAgent;
+    }
+  });
+
   it("honors BABY_MENU_AGENT before auto-detecting local agents", () => {
     expect(
       resolveDefaultAgentName({
@@ -348,6 +386,59 @@ describe("agent runtime defaults", () => {
     });
     expect(runtimeInternals.beginChangeSession).toHaveBeenCalledOnce();
     expect(runtimeInternals.collectTurnOutput).toHaveBeenCalledOnce();
+  });
+
+  it("cancels the active ACP turn through the public runtime API", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "baby-menu-agent-cancel-"));
+    const extensionsDir = join(rootDir, "extensions-dev");
+    const runtime = new BabyMenuAgentRuntime(rootDir, {
+      agentName: "mock-agent",
+      paths: {
+        extensionsDir,
+        agentStateDir: join(rootDir, ".cache", "acp-sessions"),
+        snapshotDir: join(rootDir, ".cache", "snapshots"),
+      },
+    });
+    let rejectOutput!: (error: Error) => void;
+    const output = new Promise<string>((_resolve, reject) => {
+      rejectOutput = reject;
+    });
+    const cancel = vi.fn(async () => {
+      rejectOutput(new Error("Agent turn was cancelled"));
+    });
+    const runtimeInternals = runtime as unknown as {
+      ensureAgentRuntimeCwd: () => Promise<string>;
+      beginChangeSession: () => Promise<unknown>;
+      ensureRuntime: () => Promise<{
+        ensureSession: () => Promise<object>;
+        startTurn: () => AcpRuntimeTurn;
+      }>;
+      collectTurnOutput: () => Promise<string>;
+    };
+    runtimeInternals.ensureAgentRuntimeCwd = vi.fn(async () => extensionsDir);
+    runtimeInternals.beginChangeSession = vi.fn(async () => ({
+      startedClean: true,
+      canSave: true,
+      canRollback: true,
+      snapshot: (message?: string) => ({ startedClean: true, canSave: true, canRollback: true, head: "HEAD", message }),
+      hasChanges: vi.fn(async () => false),
+      save: vi.fn(async () => ({ ok: true })),
+      rollback: vi.fn(async () => ({ ok: true })),
+    }));
+    runtimeInternals.ensureRuntime = vi.fn(async () => ({
+      ensureSession: vi.fn(async () => ({})),
+      startTurn: vi.fn(() => fakeTurn({ events: (async function* () {})(), cancel })),
+    }));
+    const collectTurnOutput = vi.fn(() => output);
+    runtimeInternals.collectTurnOutput = collectTurnOutput;
+
+    const send = runtime.send("cancel this turn");
+    await waitUntil(() => collectTurnOutput.mock.calls.length === 1);
+
+    await expect(runtime.cancel()).resolves.toBe(true);
+    expect(cancel).toHaveBeenCalledExactlyOnceWith({ reason: "user" });
+    await expect(send).rejects.toThrow("Agent turn was cancelled");
+    await expect(runtime.cancel()).resolves.toBe(false);
   });
 });
 
