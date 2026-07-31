@@ -167,7 +167,7 @@ describe("extension module compiler", () => {
     await expect(readFile(second.outputPath, "utf8")).resolves.not.toContain("stale-live-patch");
   });
 
-  it("repairs a symlinked cached output without modifying its target", async () => {
+  it.skipIf(process.platform === "win32")("repairs a symlinked cached output without modifying its target", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "baby-menu-compiler-"));
     tempDirs.push(rootDir);
     const extensionDir = join(rootDir, "extensions", "repaired-link");

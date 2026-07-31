@@ -4,6 +4,7 @@ import { AgentSideConnection, ndJsonStream, PROTOCOL_VERSION, RequestError, type
 import type * as schema from "@agentclientprotocol/sdk";
 import { safeAdapterTurnError, type SessionDriver } from "./types.js";
 import { logDebug, logError } from "./log.js";
+import { startAdapterLauncherWatchdog } from "./launcher-lifecycle.js";
 
 /**
  * A generic ACP agent (server) that bridges acpx (the client) to a backend CLI
@@ -119,9 +120,15 @@ export function runAdapter(driver: SessionDriver, scope: string): void {
     return agent;
   }, stream);
 
+  let shuttingDown = false;
+  let stopLauncherWatchdog: () => void = () => undefined;
   const shutdown = () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    stopLauncherWatchdog();
     agent.dispose().finally(() => process.exit(0));
   };
+  stopLauncherWatchdog = startAdapterLauncherWatchdog(shutdown);
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
 }

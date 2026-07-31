@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createBabyMenuRuntimePaths } from "../src/main/app-paths";
 import { seedExtensionWorkspace } from "../src/main/extension-seeder";
 
@@ -51,6 +51,41 @@ describe("Baby Menu runtime paths", () => {
       bundledExtensionTemplateDir: "/Applications/Baby Menu.app/Contents/Resources/extensions-template",
       trayIconPath: "/Applications/Baby Menu.app/Contents/Resources/tray/baby_menuTemplate.png",
       isPackaged: true,
+    });
+  });
+
+  describe("on Windows", () => {
+    let origPlatform: PropertyDescriptor | undefined;
+
+    beforeEach(() => {
+      origPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+      Object.defineProperty(process, "platform", { value: "win32" });
+    });
+
+    afterEach(() => {
+      if (origPlatform) Object.defineProperty(process, "platform", origPlatform);
+    });
+
+    it("resolves tray icon to .ico in source mode", () => {
+      const paths = createBabyMenuRuntimePaths({
+        isPackaged: false,
+        sourceRoot: "/repo",
+      });
+
+      expect(paths.trayIconPath).toBe("/repo/assets/tray/baby_menu.ico");
+    });
+
+    it("resolves tray icon to .ico in packaged mode", () => {
+      const paths = createBabyMenuRuntimePaths({
+        isPackaged: true,
+        sourceRoot: "/ignored/source",
+        homeDir: "/Users/me",
+        resourcesPath: "/Applications/Baby Menu.app/Contents/Resources",
+      });
+
+      expect(paths.trayIconPath).toBe(
+        "/Applications/Baby Menu.app/Contents/Resources/tray/baby_menu.ico",
+      );
     });
   });
 

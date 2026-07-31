@@ -105,18 +105,18 @@ describe("agent runtime defaults", () => {
   });
 
   it("launches embedded agents from the tracked extension workspace by default", () => {
-    expect(getAgentRuntimeCwd("/repo")).toBe("/repo/extensions");
+    expect(getAgentRuntimeCwd("/repo")).toBe(join("/repo", "extensions"));
   });
 
   it("launches embedded agents from extensions-dev when dev mode provides one", () => {
     expect(getAgentRuntimeCwd("/repo", { BABY_MENU_EXTENSIONS_DIR: "/repo/extensions-dev" })).toBe(
-      "/repo/extensions-dev",
+      join("/repo", "extensions-dev"),
     );
   });
 
   it("resolves relative dev extension workspaces inside the repo", () => {
     expect(getAgentRuntimeCwd("/repo", { BABY_MENU_EXTENSIONS_DIR: "extensions-dev" })).toBe(
-      "/repo/extensions-dev",
+      join("/repo", "extensions-dev"),
     );
   });
 

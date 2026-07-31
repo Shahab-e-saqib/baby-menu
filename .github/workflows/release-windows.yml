@@ -1,0 +1,81 @@
+name: Windows Installer Preview
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: windows-installer-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-unsigned-preview:
+    permissions:
+      contents: read
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.1.1
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        env:
+          BABY_MENU_UMAMI_HOST: https://a.kunchenguid.com
+          BABY_MENU_UMAMI_WEBSITE_ID: ${{ vars.BABY_MENU_UMAMI_WEBSITE_ID }}
+        run: pnpm build
+
+      - name: Build unsigned NSIS installer
+        shell: pwsh
+        run: npx electron-builder --win --x64
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Resolve unsigned installer and checksum
+        id: installer
+        shell: pwsh
+        run: |
+          $matches = @(Get-ChildItem -Path "release" -Filter "Baby-Menu-*-x64-unsigned.exe")
+          if ($matches.Count -eq 0) {
+            Write-Error "::error::No unsigned NSIS installer found in release/"
+            exit 1
+          }
+          if ($matches.Count -gt 1) {
+            Write-Error "::error::Multiple unsigned installers found in release/: $($matches.Name -join ', ')"
+            exit 1
+          }
+          $installerPath = $matches[0].FullName
+          $installerName = $matches[0].Name
+          $hash = (Get-FileHash -Path $installerPath -Algorithm SHA256).Hash.ToLower()
+          $checksumPath = "$installerPath.sha256"
+          Set-Content -Path $checksumPath -Value "$hash  $installerName"
+          echo "path=$installerPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          echo "checksum_path=$checksumPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Upload unsigned internal preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: baby-menu-win-x64-unsigned-internal-preview
+          path: |
+            ${{ steps.installer.outputs.path }}
+            ${{ steps.installer.outputs.checksum_path }}
+          retention-days: 7
+          if-no-files-found: error

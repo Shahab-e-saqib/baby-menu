@@ -19,6 +19,8 @@ export type AgentCatalogControllerOptions = {
   agentsJsonPath: string;
   resolveAdapterPath: (adapter: "claude" | "codex") => string;
   adapterLauncher: string[];
+  /** Platform to build launch commands for; defaults to process.platform. */
+  platform?: NodeJS.Platform;
   commandExists: (command: string) => boolean;
   /** The currently selected agent name; removal of the active agent is refused. */
   getActiveAgentName: () => string;
@@ -53,6 +55,7 @@ export function createAgentCatalogController(options: AgentCatalogControllerOpti
       resolveAgentCatalog({ config: customs }),
       options.resolveAdapterPath,
       options.adapterLauncher,
+      { platform: options.platform },
     );
     overrides = agentRegistryOverrides(catalog);
   }

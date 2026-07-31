@@ -4,6 +4,8 @@ import { AdapterTurnError, type SessionDriver, type UpdateSink } from "../shared
 import { LineReader } from "../shared/line-reader.js";
 import { logDebug, logError } from "../shared/log.js";
 import { childEnv } from "../shared/child-env.js";
+import { resolveDriverSpawn } from "../shared/platform-spawn.js";
+import { createChildTerminator } from "../shared/process-tree.js";
 import { mapCodexEvent, type CodexExecEvent } from "./mapper.js";
 
 const SCOPE = "codex-adapter";
@@ -22,10 +24,10 @@ export type CodexDriverOptions = {
 };
 
 /**
- * Drives `codex exec --json` per turn. The first turn runs `codex exec <prompt>`
- * with `--color never` and captures the `thread.started` id; subsequent turns
- * run `codex exec resume <id> <prompt>` without `--color`, because the resume
- * subcommand rejects that flag, so conversation memory carries over.
+ * Drives `codex exec --json` per turn. Prompts are delivered over stdin. The
+ * first turn uses `--color never` and captures the `thread.started` id;
+ * subsequent turns run `codex exec resume <id>` without `--color`, because the
+ * resume subcommand rejects that flag, so conversation memory carries over.
  *
  * Each turn is its own short-lived child (exec is one-shot), which keeps us off
  * the `codex app-server` path that starts the computer-use MCP server behind
@@ -76,23 +78,27 @@ export class CodexDriver implements SessionDriver {
     // (clap exits 2), so it stays off the resume path. Output is `--json`
     // anyway, so this only suppresses any incidental coloring on the first turn.
     const args = this.threadId
-      ? ["exec", "resume", this.threadId, ...common, text]
-      : ["exec", ...common, "--color", "never", text];
+      ? ["exec", "resume", this.threadId, ...common]
+      : ["exec", ...common, "--color", "never"];
 
-    logDebug(SCOPE, "spawn", this.command, args.slice(0, -1).join(" "), "<prompt>");
-    // codex exec takes the prompt as an arg and ignores stdin, but we pipe all
-    // three streams so the handle types as ChildProcessWithoutNullStreams.
-    const child = spawn(this.command, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: childEnv() });
+    logDebug(SCOPE, "spawn", this.command, args.join(" "), "<prompt via stdin>");
+    const env = childEnv();
+    const launch = resolveDriverSpawn(this.command, args, { env, cwd });
+    const child = spawn(launch.command, launch.args, {
+      cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...env, ...launch.env },
+      ...launch.options,
+    });
     this.child = child;
-    // Close stdin immediately: codex exec reads stdin to EOF before finishing,
-    // so leaving the pipe open makes it hang (and exit non-zero on teardown).
-    child.stdin.end();
+    const terminator = createChildTerminator(child);
     const reader = new LineReader();
 
     const activePrompt = new Promise<schema.StopReason>((resolve, reject) => {
       let settled = false;
       let stopReason: schema.StopReason | null = null;
       let terminalError: AdapterTurnError | null = null;
+      let transportError: AdapterTurnError | null = null;
       let cancelled = false;
       let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -117,12 +123,15 @@ export class CodexDriver implements SessionDriver {
         reject(err);
       };
 
+      const terminateChild = () => {
+        terminator.terminate();
+        forceKillTimer ??= setTimeout(() => terminator.force(), TERMINATION_GRACE_MS);
+      };
       const onAbort = () => {
         if (settled || cancelled) return;
         cancelled = true;
         logDebug(SCOPE, "cancel: killing codex exec");
-        child.kill("SIGTERM");
-        forceKillTimer = setTimeout(() => child.kill("SIGKILL"), TERMINATION_GRACE_MS);
+        terminateChild();
       };
       this.activeCancel = onAbort;
 
@@ -153,6 +162,11 @@ export class CodexDriver implements SessionDriver {
       });
       child.stderr.setEncoding("utf8");
       child.stderr.on("data", (chunk: string) => logDebug(SCOPE, "stderr", chunk.trimEnd()));
+      child.stdin.on("error", () => {
+        if (settled || cancelled || transportError) return;
+        transportError = new AdapterTurnError("CLI_START_FAILED", "Codex CLI could not receive the prompt.");
+        terminateChild();
+      });
       child.on("error", () => {
         if (cancelled) settle("cancelled");
         else fail(new AdapterTurnError("CLI_START_FAILED", "Codex CLI could not be started."));
@@ -161,6 +175,10 @@ export class CodexDriver implements SessionDriver {
         logDebug(SCOPE, "codex exec exited", code);
         if (cancelled) {
           settle("cancelled");
+          return;
+        }
+        if (transportError) {
+          fail(transportError);
           return;
         }
         if (terminalError) {
@@ -179,6 +197,8 @@ export class CodexDriver implements SessionDriver {
       else signal.addEventListener("abort", onAbort, { once: true });
     });
     this.activePrompt = activePrompt;
+    if (signal.aborted) child.stdin.end();
+    else child.stdin.end(text);
     return activePrompt;
   }
 
@@ -191,7 +211,7 @@ export class CodexDriver implements SessionDriver {
       return;
     }
     if (this.child) {
-      this.child.kill("SIGTERM");
+      createChildTerminator(this.child).terminate();
     }
   }
 }

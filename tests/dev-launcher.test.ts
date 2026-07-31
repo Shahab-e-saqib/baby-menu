@@ -6,6 +6,7 @@ async function loadLauncher() {
   return import(new URL("../scripts/dev.mjs", import.meta.url).href) as Promise<{
     ACTIVE_ENV: string;
     EXTENSIONS_DIR_ENV: string;
+    pnpmSpawnOptions: (platform?: NodeJS.Platform) => { shell?: boolean };
     runDev: (options: Record<string, unknown>) => number;
     resetDevWorkspace: (options: Record<string, unknown>) => number;
   }>;
@@ -13,7 +14,7 @@ async function loadLauncher() {
 
 function createHarness() {
   const execCalls: Array<{ command: string; args: string[]; cwd?: string }> = [];
-  const spawnCalls: Array<{ command: string; args: string[]; cwd?: string; env?: NodeJS.ProcessEnv }> = [];
+  const spawnCalls: Array<{ command: string; args: string[]; cwd?: string; env?: NodeJS.ProcessEnv; shell?: boolean }> = [];
   const createdDirs: string[] = [];
   const removedDirs: string[] = [];
   const copiedFiles: Array<{ source: string; destination: string }> = [];
@@ -35,8 +36,8 @@ function createHarness() {
       if (args.join(" ") === "rev-parse --show-toplevel") return "/repo\n";
       return "";
     }),
-    spawnSync: vi.fn((command: string, args: string[], options?: { cwd?: string; env?: NodeJS.ProcessEnv }) => {
-      spawnCalls.push({ command, args, cwd: options?.cwd, env: options?.env });
+    spawnSync: vi.fn((command: string, args: string[], options?: { cwd?: string; env?: NodeJS.ProcessEnv; shell?: boolean }) => {
+      spawnCalls.push({ command, args, cwd: options?.cwd, env: options?.env, shell: options?.shell });
       return { status: 0 };
     }),
   };
@@ -55,6 +56,7 @@ describe("dev launcher", () => {
     const status = runDev({
       cwd: "/repo",
       env: { [ACTIVE_ENV]: "1" },
+      platform: "linux",
       ...harness,
     });
 
@@ -66,6 +68,7 @@ describe("dev launcher", () => {
         args: ["exec", "electron-vite", "dev"],
         cwd: "/repo",
         env: expect.objectContaining({ [ACTIVE_ENV]: "1" }),
+        shell: undefined,
       },
     ]);
   });
@@ -74,7 +77,7 @@ describe("dev launcher", () => {
     const { ACTIVE_ENV, EXTENSIONS_DIR_ENV, runDev } = await loadLauncher();
     const harness = createHarness();
 
-    const status = runDev({ cwd: "/repo", env: {}, ...harness });
+    const status = runDev({ cwd: "/repo", env: {}, platform: "linux", ...harness });
 
     expect(status).toBe(0);
     expect(harness.createdDirs).toContain(join("/repo", "extensions-dev"));
@@ -103,6 +106,7 @@ describe("dev launcher", () => {
           [ACTIVE_ENV]: "1",
           [EXTENSIONS_DIR_ENV]: join("/repo", "extensions-dev"),
         }),
+        shell: undefined,
       },
     ]);
   });
@@ -132,12 +136,21 @@ describe("dev launcher", () => {
     }));
   });
 
+  it("launches pnpm through a shell only on Windows", async () => {
+    const { ACTIVE_ENV, runDev } = await loadLauncher();
+    const harness = createHarness();
+
+    runDev({ cwd: "/repo", env: { [ACTIVE_ENV]: "1" }, platform: "win32", ...harness });
+
+    expect(harness.spawnCalls[0]?.shell).toBe(true);
+  });
+
   it("removes extensions-dev before running dev on reset", async () => {
     const { ACTIVE_ENV, EXTENSIONS_DIR_ENV, resetDevWorkspace } = await loadLauncher();
     const devExtensionsDir = join("/repo", "extensions-dev");
     const harness = createHarness();
 
-    const status = resetDevWorkspace({ cwd: "/repo", env: {}, ...harness });
+    const status = resetDevWorkspace({ cwd: "/repo", env: {}, platform: "linux", ...harness });
 
     expect(status).toBe(0);
     expect(harness.removedDirs).toContain(devExtensionsDir);
@@ -163,6 +176,7 @@ describe("dev launcher", () => {
           [ACTIVE_ENV]: "1",
           [EXTENSIONS_DIR_ENV]: devExtensionsDir,
         }),
+        shell: undefined,
       },
     ]);
   });

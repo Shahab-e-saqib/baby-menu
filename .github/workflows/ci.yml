@@ -55,3 +55,165 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  windows:
+    # This gate runs the largest evidence-backed cross-platform subset. Tests
+    # using Unix-only fixtures (symlinks, chmod permission bits, macOS tray,
+    # Electron GUI) are skipped on win32. Scope and deferred validation are
+    # owned by docs/windows-port-validation.md.
+    # Deferred tests (each with concrete reason):
+    #   e2e-acp-runtime.test.ts    - real ACP subprocess + git + acp-mock
+    #   e2e-adapters.test.ts       - requires real Claude/Codex CLIs
+    #   e2e-grok-quota-refresh     - requires real Grok OIDC creds
+    #   app-lifecycle*.test.ts     - Electron GUI lifecycle
+    #   tray.test.ts               - Electron Tray/nativeImage APIs
+    #   popover-*.test.ts          - Electron BrowserWindow / screen bounds
+    #   grok-quota-generated-install.test.ts - POSIX process-group signals
+    #   renderer/*, widget-host, widget-canvas, agent-chat, settings-* - jsdom/React
+    name: windows / typecheck / build / package / platform units
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.1.1
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Platform-safe unit tests
+        run: |
+          pnpm vitest run tests/shell-path.test.ts tests/launch-command.test.ts tests/platform-spawn.test.ts tests/process-tree.test.ts tests/dev-launcher.test.ts
+          pnpm vitest run tests/adapter-claude-driver.test.ts tests/adapter-codex-driver.test.ts -t "delivers shell metacharacter prompts verbatim over stdin"
+          pnpm vitest run tests/extension-database.test.ts tests/server-action-registry.test.ts tests/extension-seeder.test.ts tests/extension-module-compiler.test.ts tests/extension-contract-surface.test.ts tests/default-extension-inventory.test.ts tests/recipe-loader.test.ts
+          pnpm vitest run tests/widget-module-registry.test.ts tests/widget-pipeline-integration.test.ts tests/widget-tailwind-css.test.ts tests/layout-module-registry.test.ts tests/widget-host-shim.test.ts tests/ui-export-contract.test.ts tests/ui-import-rewrite.test.ts
+          # widget-protocol.test.ts deferred: imports electron at module load time,
+          # and the Electron binary is a best-effort install-post script download
+          # that is not guaranteed to succeed on every Windows runner. The test
+          # logic (URL path resolution, regex) is cross-platform and covered by
+          # the Ubuntu job.
+          pnpm vitest run tests/agent-catalog.test.ts tests/agent-catalog-controller.test.ts tests/agent-runtime.test.ts tests/agent-runtime-distribution.test.ts tests/git-change-session.test.ts tests/dev-extension-change-session.test.ts tests/agent-turn-log.test.ts
+          pnpm vitest run tests/preferences.test.ts tests/telemetry.test.ts tests/notifier.test.ts tests/update-checker.test.ts tests/background-task-scheduler.test.ts tests/ipc-capabilities.test.ts tests/contracts-types.test.ts tests/design-system-styles.test.ts tests/design-type-scale.test.ts tests/windows-unc-runtime.test.ts
+
+      - name: Package Windows app and verify native runtime
+        id: package
+        shell: pwsh
+        run: |
+          pnpm exec electron-builder --win dir --x64 --config electron-builder.yml --publish never
+          $packageDir = (Resolve-Path "release/win-unpacked").Path
+          echo "dir=$packageDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          echo "BABY_MENU_WINDOWS_PACKAGE_DIR=$packageDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          $env:BABY_MENU_WINDOWS_PACKAGE_DIR = $packageDir
+          pnpm vitest run tests/windows-packaging.test.ts
+
+      - name: Verify packaged binary integrity and ELECTRON_RUN_AS_NODE
+        shell: pwsh
+        run: |
+          $packageDir = "${{ steps.package.outputs.dir }}"
+          $exe = Join-Path $packageDir "Baby Menu.exe"
+          if (-not (Test-Path $exe)) { throw "Missing Baby Menu.exe" }
+
+          # PE header verification
+          $bytes = [System.IO.File]::ReadAllBytes($exe)
+          if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw "Not a valid PE (missing MZ magic)" }
+          Write-Host "[PASS] PE header valid - $exe ($($bytes.Length) bytes)"
+
+          # Bounded ELECTRON_RUN_AS_NODE: runs a Node.js script inside the
+          # packaged Electron binary without starting a GUI. This proves the
+          # binary loads and executes bundled JS. Env is isolated so CI
+          # credentials (GITHUB_, ACTIONS_) are never visible to the child.
+          $tempDir = Join-Path $env:RUNNER_TEMP "baby-menu-binary-sanity-$([System.Guid]::NewGuid().ToString('N'))"
+          $null = New-Item -ItemType Directory -Path $tempDir -Force
+
+          $scriptFile = Join-Path $tempDir "smoke-test.mjs"
+          @"
+          const expected = 'electron-run-as-node-' + process.pid;
+          process.stdout.write(expected);
+          process.exit(0);
+          "@ | Out-File -FilePath $scriptFile -Encoding utf8
+
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = $exe
+          $psi.Arguments = $scriptFile
+          $psi.UseShellExecute = $false
+          $psi.RedirectStandardOutput = $true
+          $psi.RedirectStandardError = $true
+          $psi.CreateNoWindow = $true
+          $psi.WorkingDirectory = $packageDir
+
+          # Isolated environment — never inherit CI secrets
+          $psi.EnvironmentVariables.Clear()
+          $psi.EnvironmentVariables['ELECTRON_RUN_AS_NODE'] = '1'
+          $psi.EnvironmentVariables['TEMP'] = $tempDir
+          $psi.EnvironmentVariables['TMP'] = $tempDir
+          $psi.EnvironmentVariables['SYSTEMROOT'] = $env:SYSTEMROOT
+          if ($env:PATHEXT) { $psi.EnvironmentVariables['PATHEXT'] = $env:PATHEXT }
+          if ($env:PATH) { $psi.EnvironmentVariables['PATH'] = $env:PATH }
+
+          $proc = $null
+          try {
+            $proc = [System.Diagnostics.Process]::Start($psi)
+            $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+            $stderrTask = $proc.StandardError.ReadToEndAsync()
+            if (-not $proc.WaitForExit(10000)) {
+              try { $proc.Kill($true) } catch { Write-Warning "Forced process-tree cleanup failed: $_" }
+              $proc.WaitForExit(5000) | Out-Null
+              throw "ELECTRON_RUN_AS_NODE exceeded the 10-second timeout"
+            }
+
+            $stdout = $stdoutTask.GetAwaiter().GetResult()
+            $stderr = $stderrTask.GetAwaiter().GetResult()
+            $exitCode = $proc.ExitCode
+            if ($exitCode -ne 0) { throw "ELECTRON_RUN_AS_NODE exited with code $exitCode. stderr: $stderr" }
+            if ($stdout -notmatch '^electron-run-as-node-\d+$') { throw "Unexpected ELECTRON_RUN_AS_NODE output: $stdout" }
+            Write-Host "[PASS] ELECTRON_RUN_AS_NODE: $($stdout.Trim())"
+          } finally {
+            if ($proc) {
+              if (-not $proc.HasExited) {
+                try { $proc.Kill($true) } catch { Write-Warning "Final process-tree cleanup failed: $_" }
+                $proc.WaitForExit(5000) | Out-Null
+              }
+              $proc.Dispose()
+            }
+            Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+          Write-Host "[PASS] Temp cleaned up"
+          Write-Host ''
+
+      - name: Build x64 NSIS unsigned installer
+        shell: pwsh
+        run: pnpm exec electron-builder --win nsis --x64 --config electron-builder.yml --publish never
+
+      - name: Verify NSIS unsigned artifact
+        shell: pwsh
+        run: |
+          $installers = Get-ChildItem "release/Baby-Menu-*-x64-unsigned.exe"
+          if ($installers.Count -ne 1) { throw "Expected exactly 1 unsigned NSIS installer, found $($installers.Count): $($installers.Name -join ', ')" }
+          $installer = $installers[0]
+          if ($installer.Length -eq 0) { throw "Installer $($installer.Name) is empty" }
+          $bytes = [System.IO.File]::ReadAllBytes($installer.FullName)
+          if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw "$($installer.Name) is not a valid Windows PE executable (missing MZ magic bytes)" }
+          Write-Host "Verified: $($installer.Name) ($($installer.Length) bytes, valid PE)"
+
+      - name: Upload unsigned NSIS installer for internal validation
+        uses: actions/upload-artifact@v4
+        with:
+          name: baby-menu-unsigned-nsis-x64
+          path: release/Baby-Menu-*-x64-unsigned.exe
+          retention-days: 1
+          if-no-files-found: error

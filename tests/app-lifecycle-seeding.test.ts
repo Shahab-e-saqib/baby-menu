@@ -18,6 +18,7 @@ const createBabyMenuTray = vi.fn((_onClick: (bounds: Rectangle) => void) => tray
 const electronApp = {
   commandLine: { appendSwitch: vi.fn() },
   dock: { hide: vi.fn() },
+  getAppPath: vi.fn(() => "/repo"),
   getPath: vi.fn(() => "/tmp"),
   getVersion: vi.fn(() => "0.0.0-test"),
   getLoginItemSettings: vi.fn(() => ({ openAtLogin: false })),
@@ -27,6 +28,9 @@ const electronApp = {
   isPackaged: false,
   on: vi.fn(),
   whenReady: vi.fn(async () => undefined),
+  quit: vi.fn(),
+  requestSingleInstanceLock: vi.fn(() => true),
+  setAppUserModelId: vi.fn(),
 };
 const browserWindowInstance = {
   isDestroyed: vi.fn(() => false),
@@ -109,7 +113,7 @@ vi.mock("../src/main/widget-protocol", () => ({
 }));
 vi.mock("../src/main/tray", () => ({ createBabyMenuTray }));
 vi.mock("../src/main/shell-path", () => ({ expandProcessPathForGuiLaunch: vi.fn(() => "/usr/bin:/bin") }));
-vi.mock("../src/shared/paths", () => ({ EXTENSIONS_DIR_ENV: "BABY_MENU_EXTENSIONS_DIR", getRepoRoot: vi.fn(() => "/repo") }));
+vi.mock("../src/shared/paths", () => ({ EXTENSIONS_DIR_ENV: "BABY_MENU_EXTENSIONS_DIR", getRepoRoot: vi.fn(() => "/repo"), isUncWindowsLaunch: vi.fn(() => false) }));
 
 describe("startBabyMenuApp with a symlinked extension workspace", () => {
   const tempDirs: string[] = [];
@@ -166,7 +170,7 @@ describe("startBabyMenuApp with a symlinked extension workspace", () => {
     await expect(appModule.startBabyMenuApp()).resolves.toBeUndefined();
 
     // Startup reached tray creation instead of aborting on the seeder throw.
-    expect(createBabyMenuTray).toHaveBeenCalledWith(expect.any(Function), { iconPath: join(tempDirs[0], "tray.png") });
+    expect(createBabyMenuTray).toHaveBeenCalledWith(expect.any(Function), { iconPath: join(tempDirs[0], "tray.png"), onOpen: expect.any(Function), onQuit: expect.any(Function) });
     expect(appModule.getActiveBabyMenuTray()).toBe(trayInstance);
 
     // The seed resolved the symlink and landed in the real writable target...

@@ -1,8 +1,8 @@
 import { app, BrowserWindow, screen, shell, type Rectangle } from "electron";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BabyMenuCustomAgentInput, BabyMenuSettings } from "../shared/contracts";
-import { getRepoRoot } from "../shared/paths";
+import { getRepoRoot, isUncWindowsLaunch } from "../shared/paths";
 import { createAgentCatalogController } from "./agent-catalog-controller";
 import { BabyMenuAgentRuntime, commandExists } from "./agent-runtime";
 import { resolveBabyMenuRuntimePaths } from "./app-paths";
@@ -23,26 +23,92 @@ import { createPreferencesService } from "./preferences";
 import { createBackgroundTaskSource, createServerActionRegistry } from "./server-action-registry";
 import { getDefaultTelemetry, initDefaultTelemetry } from "./telemetry";
 import { expandProcessPathForGuiLaunch } from "./shell-path";
+import { buildAdapterLauncherTokens } from "./launch-command";
 import { createUpdateChecker } from "./update-checker";
 import { createBabyMenuTray, type BabyMenuTray } from "./tray";
+import {
+  parseWindowsAdapterLaunchRequest,
+  prepareWindowsAdapterLauncher,
+  runWindowsAdapterLauncher,
+} from "./windows-adapter-launcher";
 import { createLayoutModuleRegistry, createWidgetModuleRegistry } from "./widget-module-registry";
 import { registerBabyMenuProtocolHandlers, registerBabyMenuProtocolSchemes } from "./widget-protocol";
 
-if (process.platform === "darwin") {
+const windowsAdapterLaunchRequest = parseWindowsAdapterLaunchRequest();
+
+if (windowsAdapterLaunchRequest) {
+  prepareWindowsAdapterLauncher(app);
+}
+
+if (!windowsAdapterLaunchRequest && process.platform === "darwin") {
   app.commandLine.appendSwitch("use-mock-keychain");
 }
 
+// Narrow GPU fallback for the MAIN packaged app process when launched from a
+// UNC path (e.g. a WSL \\wsl.localhost\... network share): Chromium's sandboxed
+// GPU subprocess cannot launch from a network share, which crashes the app at
+// startup in a fatal GPU-init loop (gpu_data_manager_impl_private.cc:417
+// "GPU process isn't usable. Goodbye."). This is scoped to UNC launches only, so
+// native local-drive installs keep full GPU acceleration and the GPU sandbox;
+// the Electron-as-Node adapter launcher has its own equivalent handling. The
+// switches must be appended before app.whenReady() (i.e. before Chromium starts).
+if (!windowsAdapterLaunchRequest && isUncWindowsLaunch()) {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch("in-process-gpu");
+  app.commandLine.appendSwitch("disable-gpu");
+}
+
 const remoteDebuggingPort = Number(process.env.BABY_MENU_REMOTE_DEBUGGING_PORT);
-if (Number.isInteger(remoteDebuggingPort) && remoteDebuggingPort >= 1 && remoteDebuggingPort <= 65_535) {
+if (
+  !windowsAdapterLaunchRequest &&
+  Number.isInteger(remoteDebuggingPort) &&
+  remoteDebuggingPort >= 1 &&
+  remoteDebuggingPort <= 65_535
+) {
   app.commandLine.appendSwitch("remote-debugging-port", String(remoteDebuggingPort));
 }
 
-registerBabyMenuProtocolSchemes();
+if (!windowsAdapterLaunchRequest) {
+  registerBabyMenuProtocolSchemes();
+}
 
+// Windows application identity must be set before app.whenReady() so the
+// taskbar groups the running instance under the correct AppUserModelID.
+if (!windowsAdapterLaunchRequest && process.platform === "win32") {
+  const executablePath = app.getPath("exe");
+  const executableName = win32.basename(executablePath, win32.extname(executablePath));
+  const isDevIdentity = !app.isPackaged || executableName.toLowerCase() === "baby menu dev";
+  app.setAppUserModelId(
+    isDevIdentity ? "com.kunchenguid.baby-menu.dev" : "com.kunchenguid.baby-menu",
+  );
+}
+
+// Single-instance lock: only the first process creates the tray, popover,
+// runtime, and background services. A second process quits immediately.
 let popoverWindow: BrowserWindow | null = null;
 let activeTray: BabyMenuTray | null = null;
+let pendingPopoverActivation = false;
+let popoverActivationPromise: Promise<void> | null = null;
 let latestTrayBounds: Rectangle | null = null;
 let latestPopoverSize: Size = DEFAULT_POPOVER_SIZE;
+let isPrimaryInstance = true;
+if (!windowsAdapterLaunchRequest) {
+  isPrimaryInstance = app.requestSingleInstanceLock();
+  if (isPrimaryInstance) {
+    app.on("second-instance", () => {
+      void requestPopoverActivation();
+    });
+  } else {
+    console.warn(
+      JSON.stringify({
+        event: "second-instance-rejected",
+        platform: process.platform,
+        isPackaged: app.isPackaged,
+      }),
+    );
+    app.exit(0);
+  }
+}
 
 export function getActiveBabyMenuTray(): BabyMenuTray | null {
   return activeTray;
@@ -91,6 +157,44 @@ async function togglePopover(trayBounds: Rectangle): Promise<void> {
     return;
   }
 
+  await showPopover(trayBounds, window);
+}
+
+async function activatePopoverFromTray(): Promise<void> {
+  if (!activeTray) {
+    pendingPopoverActivation = true;
+    return;
+  }
+  const trayBounds = activeTray.getBounds();
+  latestTrayBounds = trayBounds;
+  const window = await createPopoverWindow();
+  if (window.isVisible()) {
+    window.focus();
+    return;
+  }
+
+  await showPopover(trayBounds, window);
+}
+
+function requestPopoverActivation(): Promise<void> | null {
+  if (!activeTray) {
+    pendingPopoverActivation = true;
+    return null;
+  }
+  if (popoverActivationPromise) return popoverActivationPromise;
+
+  pendingPopoverActivation = false;
+  popoverActivationPromise = activatePopoverFromTray()
+    .catch((error) => {
+      console.error("[baby-menu] popover activation failed", error);
+    })
+    .finally(() => {
+      popoverActivationPromise = null;
+    });
+  return popoverActivationPromise;
+}
+
+async function showPopover(trayBounds: Rectangle, window: BrowserWindow): Promise<void> {
   const display = screen.getDisplayNearestPoint({ x: trayBounds.x, y: trayBounds.y });
   window.setBounds(calculatePopoverBounds(trayBounds, display.workArea, latestPopoverSize));
   setPopoverKeyWindowActive(true);
@@ -186,7 +290,14 @@ export async function startBabyMenuApp(): Promise<void> {
   // adapters. Run them with the bundled Electron as Node (ELECTRON_RUN_AS_NODE)
   // so there is no dependency on a separately-installed `node` - the same class
   // of PATH fragility that made the agent look "unavailable" before.
-  const adapterLauncher = ["env", "ELECTRON_RUN_AS_NODE=1", process.execPath];
+  const adapterLauncher = buildAdapterLauncherTokens({
+    executable: process.execPath,
+    env: { ELECTRON_RUN_AS_NODE: "1" },
+    windowsAppPath:
+      process.platform === "win32" && !app.isPackaged
+        ? app.getAppPath()
+        : undefined,
+  });
   // The catalog is a live runtime service: it owns agents.json and pushes
   // rebuilt registry overrides into the runtime so UI-added custom agents apply
   // immediately. agentRuntime is referenced through closures (assigned just below)
@@ -297,11 +408,17 @@ export async function startBabyMenuApp(): Promise<void> {
     (bounds) => {
       void togglePopover(bounds);
     },
-    { iconPath: paths.trayIconPath },
+    {
+      iconPath: paths.trayIconPath,
+      onOpen: () => {
+        void requestPopoverActivation();
+      },
+      onQuit: () => app.quit(),
+    },
   );
 
-  if (process.env.BABY_MENU_OPEN_POPOVER_ON_START === "1") {
-    await togglePopover(activeTray.getBounds());
+  if (pendingPopoverActivation || process.env.BABY_MENU_OPEN_POPOVER_ON_START === "1") {
+    await requestPopoverActivation();
   }
 
   // Background tasks run on their own cadence in the main process, regardless of whether
@@ -331,9 +448,19 @@ export async function startBabyMenuApp(): Promise<void> {
 }
 
 if (!process.env.VITEST) {
-  // Last-resort guard: an unhandled rejection here would otherwise leave a dead
-  // app with a lingering dock icon and no tray, with no diagnostic in the logs.
-  startBabyMenuApp().catch((error) => {
-    console.error("[baby-menu] fatal startup error", error);
-  });
+  if (windowsAdapterLaunchRequest) {
+    void runWindowsAdapterLauncher(windowsAdapterLaunchRequest).then(
+      (exitCode) => app.exit(exitCode),
+      (error) => {
+        console.error("[baby-menu] Windows adapter launcher failed", error);
+        app.exit(1);
+      },
+    );
+  } else if (isPrimaryInstance) {
+    // Last-resort guard: an unhandled rejection here would otherwise leave a dead
+    // app with a lingering dock icon and no tray, with no diagnostic in the logs.
+    startBabyMenuApp().catch((error) => {
+      console.error("[baby-menu] fatal startup error", error);
+    });
+  }
 }

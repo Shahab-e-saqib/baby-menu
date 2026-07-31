@@ -34,7 +34,7 @@ describe("DevExtensionChangeSession", () => {
     await expect(pathExists(join(extensionsDir, "demo"))).resolves.toBe(false);
   });
 
-  it("restores contents through a symlinked extensions dir without replacing the symlink", async () => {
+  it.skipIf(process.platform === "win32")("restores contents through a symlinked extensions dir without replacing the symlink", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "baby-menu-dev-extension-session-"));
     const realDir = join(rootDir, "real-extensions");
     await mkdir(realDir, { recursive: true });
@@ -147,7 +147,7 @@ describe("DevExtensionChangeSession", () => {
     expect(await readFile(join(extensionsDir, "alpha", "icon.bin"))).toEqual(before);
   });
 
-  it("restores executable file modes on rollback", async () => {
+  it.skipIf(process.platform === "win32")("restores executable file modes on rollback", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "baby-menu-dev-extension-session-"));
     const extensionsDir = join(rootDir, "extensions-dev");
     await mkdir(join(extensionsDir, "alpha"), { recursive: true });
@@ -183,7 +183,7 @@ describe("DevExtensionChangeSession", () => {
     await expect(readFile(join(extensionsDir, "alpha", "widget.tsx"), "utf8")).resolves.toBe("before\n");
   });
 
-  it("removes symlinks created after the snapshot", async () => {
+  it.skipIf(process.platform === "win32")("removes symlinks created after the snapshot", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "baby-menu-dev-extension-session-"));
     const extensionsDir = join(rootDir, "extensions-dev");
     await mkdir(join(extensionsDir, "alpha"), { recursive: true });

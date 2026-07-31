@@ -4,6 +4,8 @@ import { AdapterTurnError, type SessionDriver, type UpdateSink } from "../shared
 import { LineReader } from "../shared/line-reader.js";
 import { logDebug, logError } from "../shared/log.js";
 import { childEnv } from "../shared/child-env.js";
+import { resolveDriverSpawn } from "../shared/platform-spawn.js";
+import { createChildTerminator } from "../shared/process-tree.js";
 import { mapClaudeEvent, type ClaudeEvent } from "./mapper.js";
 
 const SCOPE = "claude-adapter";
@@ -17,9 +19,9 @@ export type ClaudeDriverOptions = {
 };
 
 /**
- * Drives `claude -p` per turn. The first turn runs `claude -p <prompt>` and
- * captures the session id from the stream; subsequent turns run
- * `claude -p --resume <id> <prompt>` so conversation memory carries over.
+ * Drives `claude -p` per turn. The prompt is delivered over stdin, the first
+ * turn captures the session id from the stream, and subsequent turns add
+ * `--resume <id>` so conversation memory carries over.
  *
  * Why per-turn instead of one persistent process: `claude -p --input-format
  * stream-json` does NOT process input until stdin reaches EOF (it is not a
@@ -71,21 +73,27 @@ export class ClaudeDriver implements SessionDriver {
       ...this.extraArgs,
     ];
     const args = this.sessionId
-      ? ["-p", "--resume", this.sessionId, ...flags, text]
-      : ["-p", ...flags, text];
+      ? ["-p", "--resume", this.sessionId, ...flags]
+      : ["-p", ...flags];
 
     logDebug(SCOPE, "spawn", this.command, this.sessionId ? "(resume)" : "(new)");
-    const child = spawn(this.command, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: childEnv() });
+    const env = childEnv();
+    const launch = resolveDriverSpawn(this.command, args, { env, cwd });
+    const child = spawn(launch.command, launch.args, {
+      cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...env, ...launch.env },
+      ...launch.options,
+    });
     this.child = child;
-    // claude reads stdin until EOF before producing output; the prompt is passed
-    // as an arg, so close stdin immediately.
-    child.stdin.end();
+    const terminator = createChildTerminator(child);
     const reader = new LineReader();
 
     const activePrompt = new Promise<schema.StopReason>((resolve, reject) => {
       let settled = false;
       let stopReason: schema.StopReason | null = null;
       let terminalError: AdapterTurnError | null = null;
+      let transportError: AdapterTurnError | null = null;
       let cancelled = false;
       let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -110,12 +118,15 @@ export class ClaudeDriver implements SessionDriver {
         reject(err);
       };
 
+      const terminateChild = () => {
+        terminator.terminate();
+        forceKillTimer ??= setTimeout(() => terminator.force(), TERMINATION_GRACE_MS);
+      };
       const onAbort = () => {
         if (settled || cancelled) return;
         cancelled = true;
         logDebug(SCOPE, "cancel: killing claude");
-        child.kill("SIGTERM");
-        forceKillTimer = setTimeout(() => child.kill("SIGKILL"), TERMINATION_GRACE_MS);
+        terminateChild();
       };
       this.activeCancel = onAbort;
 
@@ -139,6 +150,11 @@ export class ClaudeDriver implements SessionDriver {
       });
       child.stderr.setEncoding("utf8");
       child.stderr.on("data", (chunk: string) => logDebug(SCOPE, "stderr", chunk.trimEnd()));
+      child.stdin.on("error", () => {
+        if (settled || cancelled || transportError) return;
+        transportError = new AdapterTurnError("CLI_START_FAILED", "Claude CLI could not receive the prompt.");
+        terminateChild();
+      });
       child.on("error", () => {
         if (cancelled) settle("cancelled");
         else fail(new AdapterTurnError("CLI_START_FAILED", "Claude CLI could not be started."));
@@ -147,6 +163,10 @@ export class ClaudeDriver implements SessionDriver {
         logDebug(SCOPE, "claude exited", code);
         if (cancelled) {
           settle("cancelled");
+          return;
+        }
+        if (transportError) {
+          fail(transportError);
           return;
         }
         if (terminalError) {
@@ -163,6 +183,8 @@ export class ClaudeDriver implements SessionDriver {
       else signal.addEventListener("abort", onAbort, { once: true });
     });
     this.activePrompt = activePrompt;
+    if (signal.aborted) child.stdin.end();
+    else child.stdin.end(text);
     return activePrompt;
   }
 
@@ -175,7 +197,7 @@ export class ClaudeDriver implements SessionDriver {
       return;
     }
     if (this.child) {
-      this.child.kill("SIGTERM");
+      createChildTerminator(this.child).terminate();
     }
   }
 }

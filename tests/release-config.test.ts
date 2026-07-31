@@ -44,11 +44,54 @@ describe("distribution config", () => {
     expect(config).toContain("hello-world/**");
     expect(config).toContain("to: tray");
     expect(config).toContain("baby_menuTemplate*.png");
+    expect(config).toContain("baby_menu.ico");
     expect(config).toContain("identity: null");
     expect(config).toContain("hardenedRuntime: false");
     expect(config).toContain("icon: assets/app-icon.icns");
     await expect(stat(resolve(import.meta.dirname, "../assets/app-icon.svg")).then((file) => file.isFile())).resolves.toBe(true);
     await expect(stat(resolve(import.meta.dirname, "../assets/app-icon.icns")).then((file) => file.isFile())).resolves.toBe(true);
+  });
+
+  it("configures NSIS per-user installer with selectable path, shortcuts, and unsigned artifact name", async () => {
+    const config = await readFile(resolve(import.meta.dirname, "../electron-builder.yml"), "utf8");
+
+    expect(config).toContain("win:");
+    expect(config).toContain("icon: assets/app-icon.ico");
+    expect(config).toContain("nsis:");
+    expect(config).toContain("oneClick: false");
+    expect(config).toContain("perMachine: false");
+    expect(config).toContain("runAfterFinish: false");
+    expect(config).toContain("allowToChangeInstallationDirectory: true");
+    expect(config).toContain("createDesktopShortcut: true");
+    expect(config).toContain("createStartMenuShortcut: true");
+    expect(config).toContain("shortcutName: Baby Menu");
+    expect(config).toContain("artifactName: Baby-Menu-${version}-x64-unsigned.${ext}");
+    expect(config).not.toContain("deleteAppDataOnUninstall");
+  });
+
+  it("disables auto-launch after install via runAfterFinish: false to prevent second-instance collision", async () => {
+    const config = await readFile(resolve(import.meta.dirname, "../electron-builder.yml"), "utf8");
+
+    expect(config).toMatch(/runAfterFinish:\s*false/);
+    // Must not rely on the NSIS default (true) which auto-launches in non-silent GUI mode
+    // and may race with the explicit validator launch when the installer finishes.
+    // electron-builder NsisTarget.js: if (options.runAfterFinish !== false) defines
+    // RUN_AFTER_FINISH for oneClick installers, which auto-starts the app.
+    // Source: app-builder-lib@26.8.2 templates/nsis/installSection.nsh lines 91-97:
+    //   !ifdef RUN_AFTER_FINISH
+    //     ${ifNot} ${Silent}
+    //     ${orIf} ${isForceRun}
+    //       !insertmacro doStartApp
+    //     ${endIf}
+    // Verified at node_modules/.pnpm/app-builder-lib@26.8.2_.../templates/nsis/installSection.nsh
+  });
+
+  it("adds the package:win script that builds the NSIS installer", () => {
+    const script = packageJson.scripts?.["package:win"];
+    expect(script).toContain("electron-builder --win --x64");
+    expect(script).toContain("--config electron-builder.dev.yml");
+    expect(script).not.toMatch(/\brm\s+-rf\b/);
+    expect(script).toContain("rmSync");
   });
 
   it("adds a release-please workflow that publishes the DMG and updates the Homebrew tap after a release", async () => {

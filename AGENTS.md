@@ -40,7 +40,7 @@ Follow these rules:
 
 ## Architecture
 
-This is a macOS tray-bar Electron app whose distinguishing idea is that an embedded agent (running via `acpx/runtime`) edits the active extension workspace at runtime.
+This is a tray-bar Electron app whose distinguishing idea is that an embedded agent (running via `acpx/runtime`) edits the active extension workspace at runtime.
 Tracked source extensions use git as the accept/rollback mechanism when selected explicitly; packaged mode edits `~/.baby-menu/extensions` and uses filesystem snapshots.
 
 Three processes, kept deliberately separate:
@@ -61,7 +61,7 @@ The extension-facing slice of that contract is a generated public surface, treat
 
 - `app.ts` - Electron lifecycle, popover window creation, packaged path setup, extension seeding, preferences, selectable-agent catalog wiring, protocols, tray, and IPC. `package.json#main` points here via `out/main/index.js`.
 - `app-paths.ts` - resolves source paths versus packaged `~/.baby-menu` paths.
-- `tray.ts` - macOS tray icon and click handling (`createBabyMenuTray`).
+- `tray.ts` - platform-aware tray icon, click handling, and Windows context-menu wiring (`createBabyMenuTray`).
 - `popover.ts` - popover `BrowserWindow` options (`createPopoverOptions`), adaptive width/height sizing (`responsivePopoverSize`), bounds math (`calculatePopoverBounds`), and renderer URL/file loading (`loadPopoverRenderer`).
 - `ipc.ts` - registers all `ipcMain` handlers exposed via the preload bridge; the single place new generic IPC routes are added.
 - `agent-catalog.ts` - defines built-in agents, parses custom `agents.json`, computes Settings availability, and builds `acpx` registry overrides.
@@ -77,7 +77,7 @@ The extension-facing slice of that contract is a generated public surface, treat
 - `widget-module-registry.ts` - discovers widget modules and the optional root `layout.tsx`, returning renderer `/@fs` URLs in dev and, in packaged mode, compiled `baby-menu-widget://` module URLs plus sibling compiled `cssUrl` files; compiled layout failures warn and fall back to the built-in column.
 - `widget-protocol.ts` - registers custom protocols for compiled widget and layout modules, their `.css`, and the renderer host shims (`react`, `react/jsx-runtime`, and `@babymenu/ui` re-exported from the host global).
 - `preferences.ts` - stores app preferences, including the selected agent, under the active app data root and applies login-item settings only when login items are allowed, keeping source/dev mode as a no-op for macOS login items.
-- `shell-path.ts` - expands `PATH` for GUI launches so packaged apps can find agent CLIs.
+- `shell-path.ts` - expands the GUI-launch `PATH` with common Unix and login-shell entries on macOS/Linux, while preserving the inherited Windows `PATH` unchanged.
 - `update-checker.ts` - checks the latest GitHub Release at most every 4 hours, compares it to the running app version, opens the release page externally, and simulates an available update in source/dev mode so the header indicator can be exercised.
 - `recipe-loader.ts` - discovers and parses `recipes/*.html` from the active extension workspace.
 - `server-action-registry.ts` - discovers extension server actions and background task declarations from the active extension workspace, caches unchanged compiled server modules, and reloads them when the entry or local helper source changes.
@@ -151,6 +151,10 @@ When files did change, the renderer summarizes one changed extension, multiple c
 
 Packaged runtime state lives under `~/.baby-menu` and is not git-backed.
 Do not write generated extension files, the local extension database, compiled modules, preferences, logs, snapshots, or ACP session state into the `.app` bundle.
+
+### Platform services (macOS and Windows)
+
+Keep platform-adjacent changes behind explicit platform branches so the existing macOS/POSIX behavior remains unchanged. The Windows seam inventory, current port status, remaining clean-Windows validation, and excluded scope are owned by `docs/windows-port-validation.md`; do not claim packaged Windows support before the remaining checks there pass.
 
 ### Recipes and extensions
 

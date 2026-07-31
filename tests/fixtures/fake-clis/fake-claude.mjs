@@ -1,20 +1,38 @@
 #!/usr/bin/env node
-// Minimal fake of `claude -p [--resume <id>] <prompt> --output-format stream-json --verbose`.
+// Minimal fake of `claude -p [--resume <id>] --output-format stream-json --verbose`.
 // Emits stream-json events mirroring the real flat shape, then exits (the driver
 // runs one process per turn). Echoes whether it was resumed so the driver's
 // session threading can be asserted. Kept in sync with
 // tests/fixtures/protocols/claude/*.jsonl.
 // Special SLOW_* prompts are test controls for cancellation and child-process
 // termination behavior rather than captured protocol fixtures.
-import { existsSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, writeFileSync } from "node:fs";
 
 const emit = (obj) => process.stdout.write(JSON.stringify(obj) + "\n");
 
 const argv = process.argv.slice(2);
+if (process.env.FAKE_CLAUDE_ARGS_FILE) {
+  writeFileSync(process.env.FAKE_CLAUDE_ARGS_FILE, JSON.stringify(argv));
+}
+if (process.env.FAKE_CLAUDE_STDIN_FAILURE_GATE) {
+  const { readyFile, terminatedFile, releaseFile } = JSON.parse(process.env.FAKE_CLAUDE_STDIN_FAILURE_GATE);
+  let terminating = false;
+  process.on("SIGTERM", () => {
+    terminating = true;
+    writeFileSync(terminatedFile, "");
+  });
+  closeSync(0);
+  writeFileSync(readyFile, "");
+  setInterval(() => {
+    if (existsSync(releaseFile)) process.exit(terminating ? 0 : 2);
+  }, 5);
+  await new Promise(() => {});
+}
 const resumeIdx = argv.indexOf("--resume");
 const isResume = resumeIdx >= 0;
-// The prompt is the final positional arg.
-const prompt = argv[argv.length - 1] ?? "";
+process.stdin.setEncoding("utf8");
+let prompt = "";
+for await (const chunk of process.stdin) prompt += chunk;
 
 if (prompt.includes("PROVIDER_AUTH_ERROR")) {
   emit({ type: "system", subtype: "init", session_id: "fake-session", model: "fake", cwd: process.cwd() });

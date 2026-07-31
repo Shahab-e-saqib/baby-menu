@@ -82,6 +82,44 @@ describe("calculatePopoverBounds", () => {
     expect(bounds.y).toBe(22);
   });
 
+  it("opens above the tray icon on a bottom taskbar layout (Windows)", () => {
+    // Bottom taskbar reduces work area height. Tray sits at bottom-right,
+    // too close to the bottom edge for the popover to fit below.
+    const bounds = calculatePopoverBounds(
+      { x: 1860, y: 1018, width: 20, height: 22 },
+      { x: 0, y: 0, width: 1920, height: 1040 },
+      { width: 420, height: 620 },
+    );
+
+    expect(bounds).toEqual({ x: 1492, y: 390, width: 420, height: 620 });
+  });
+
+  it("clamps the popover inside the work area on a left-side taskbar (Windows)", () => {
+    // Left taskbar shifts the work area right. Tray at bottom-left of the
+    // work area; centering would push the popover past the left edge so x
+    // clamps to the work area inset.
+    const bounds = calculatePopoverBounds(
+      { x: 60, y: 1018, width: 20, height: 22 },
+      { x: 60, y: 0, width: 1860, height: 1080 },
+      { width: 420, height: 620 },
+    );
+
+    expect(bounds).toEqual({ x: 68, y: 390, width: 420, height: 620 });
+  });
+
+  it("clamps the popover inside the work area on a right-side taskbar (Windows)", () => {
+    // Right taskbar reduces work area width. Tray at bottom-right of the
+    // work area; centering would push the popover past the right edge so x
+    // clamps to the work area inset.
+    const bounds = calculatePopoverBounds(
+      { x: 1820, y: 1018, width: 20, height: 22 },
+      { x: 0, y: 0, width: 1860, height: 1080 },
+      { width: 420, height: 620 },
+    );
+
+    expect(bounds).toEqual({ x: 1432, y: 390, width: 420, height: 620 });
+  });
+
   it("loads localhost renderer URLs during development", async () => {
     const window = createRendererWindow();
 
