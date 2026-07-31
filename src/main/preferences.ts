@@ -76,25 +76,34 @@ export function createPreferencesService({
     return preferences;
   }
 
+  let preferenceMutation = Promise.resolve();
+  function updatePreferences(
+    update: (current: BabyMenuPreferences) => BabyMenuPreferences,
+    afterWrite?: (preferences: BabyMenuPreferences) => void,
+  ): Promise<BabyMenuPreferences> {
+    const result = preferenceMutation.then(async () => {
+      const current = await readPreferences();
+      const preferences = await writePreferences(normalizePreferences(update(current)));
+      afterWrite?.(preferences);
+      return preferences;
+    });
+    preferenceMutation = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
   return {
     get: readPreferences,
-    async setOpenAtLogin(openAtLogin) {
-      const current = await readPreferences();
-      const preferences = await writePreferences(normalizePreferences({ ...current, openAtLogin }));
-      applyLoginItemSettings(preferences);
-      return preferences;
+    setOpenAtLogin(openAtLogin) {
+      return updatePreferences((current) => ({ ...current, openAtLogin }), applyLoginItemSettings);
     },
-    async setAgent(agentName) {
-      const current = await readPreferences();
-      return writePreferences(normalizePreferences({ ...current, agentName }));
+    setAgent(agentName) {
+      return updatePreferences((current) => ({ ...current, agentName }));
     },
-    async setAgentMode(agentName, mode) {
-      const current = await readPreferences();
-      return writePreferences(normalizePreferences({ ...current, agentModes: { ...current.agentModes, [agentName]: mode } }));
+    setAgentMode(agentName, mode) {
+      return updatePreferences((current) => ({ ...current, agentModes: { ...current.agentModes, [agentName]: mode } }));
     },
-    async setWslDistribution(distribution) {
-      const current = await readPreferences();
-      return writePreferences(normalizePreferences({ ...current, wslDistribution: distribution }));
+    setWslDistribution(distribution) {
+      return updatePreferences((current) => ({ ...current, wslDistribution: distribution }));
     },
     async apply() {
       const preferences = await readPreferences();
