@@ -485,7 +485,7 @@ export class BabyMenuAgentRuntime {
     const agentCwd = await this.ensureAgentRuntimeCwd();
     if (this.executionMode === "wsl") {
       const { validateWslLaunch } = await import("./wsl-cli");
-      const reason = validateWslLaunch(this.wslDistribution, this.agentName, agentCwd);
+      const reason = await validateWslLaunch(this.wslDistribution, this.agentName, agentCwd);
       if (reason) throw new AgentTurnFailedError({ code: "CLI_START_FAILED", detailCode: "WSL_UNAVAILABLE", message: reason });
     }
     const changeSession = await this.beginChangeSession(agentCwd);

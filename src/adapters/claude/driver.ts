@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import type * as schema from "@agentclientprotocol/sdk";
 import { AdapterTurnError, providerCliStartError, type SessionDriver, type UpdateSink } from "../shared/types.js";
 import { LineReader } from "../shared/line-reader.js";
@@ -37,7 +37,7 @@ export class ClaudeDriver implements SessionDriver {
   private readonly extraArgs: string[];
   private cwd: string | null = null;
   private sessionId: string | null = null;
-  private child: ChildProcessWithoutNullStreams | null = null;
+  private child: ChildProcess | null = null;
   private activePrompt: Promise<schema.StopReason> | null = null;
   private activeCancel: (() => void) | null = null;
 
@@ -76,12 +76,12 @@ export class ClaudeDriver implements SessionDriver {
       ? ["-p", "--resume", this.sessionId, ...flags]
       : ["-p", ...flags];
 
-    logDebug(SCOPE, "spawn", this.command, this.sessionId ? "(resume)" : "(new)");
+    logDebug(SCOPE, "spawn", this.sessionId ? "resume" : "new");
     const env = childEnv();
     const launch = resolveDriverSpawn(this.command, args, { env, cwd });
     const child = spawn(launch.command, launch.args, {
       cwd,
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "ignore"],
       env: { ...env, ...launch.env },
       ...launch.options,
     });
@@ -137,7 +137,7 @@ export class ClaudeDriver implements SessionDriver {
           try {
             event = JSON.parse(line) as ClaudeEvent & { session_id?: string };
           } catch {
-            logDebug(SCOPE, "non-json stdout line", line);
+            logDebug(SCOPE, "ignored non-json stdout line");
             continue;
           }
           // The driver owns session id capture (the mapper is pure/ACP-only).
@@ -148,8 +148,6 @@ export class ClaudeDriver implements SessionDriver {
           if (result.stopReason) stopReason = result.stopReason;
         }
       });
-      child.stderr.setEncoding("utf8");
-      child.stderr.on("data", (chunk: string) => logDebug(SCOPE, "stderr", chunk.trimEnd()));
       child.stdin.on("error", () => {
         if (settled || cancelled || transportError) return;
         transportError = new AdapterTurnError("CLI_START_FAILED", "Claude CLI could not receive the prompt.");

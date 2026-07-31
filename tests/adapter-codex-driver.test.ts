@@ -2,7 +2,7 @@ import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtemp, writeFile, readFile } from "node:fs/promises";
 import { existsSync, watch } from "node:fs";
-import { describe, expect, it, afterEach } from "vitest";
+import { describe, expect, it, afterEach, vi } from "vitest";
 import { CodexDriver } from "../src/adapters/codex/driver";
 import type * as schema from "@agentclientprotocol/sdk";
 
@@ -198,6 +198,22 @@ describe("CodexDriver (against a fake codex CLI)", () => {
       code: "AUTHENTICATION_FAILED",
       message: "Codex is not authenticated. Run `codex login` and try again.",
     });
+  });
+
+  it("never forwards provider stderr through adapter debug logging", async () => {
+    const d = makeDriver();
+    await d.start(tmpdir());
+    process.env.BABY_MENU_ADAPTER_DEBUG = "1";
+    const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await expect(d.prompt("EXIT_NONZERO", () => {}, new AbortController().signal)).rejects.toMatchObject({
+        code: "CLI_EXIT_FAILED",
+      });
+      expect(write.mock.calls.flat().join(" ")).not.toContain("private detail");
+    } finally {
+      write.mockRestore();
+      delete process.env.BABY_MENU_ADAPTER_DEBUG;
+    }
   });
 
   it("surfaces a command tool_call and tool_call_update", async () => {

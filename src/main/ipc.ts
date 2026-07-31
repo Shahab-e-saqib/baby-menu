@@ -186,6 +186,7 @@ export function registerIpcHandlers(
 
   ipcMain.handle("baby-menu:settings:set-agent-mode", async (_event, agentName: string, mode: AgentExecutionMode) => {
     if (!settings.setAgentMode) throw new Error("Agent execution modes are unavailable.");
+    if (mode !== "native" && mode !== "wsl") throw new Error("Invalid agent execution mode.");
     return settings.setAgentMode(agentName, mode);
   });
 

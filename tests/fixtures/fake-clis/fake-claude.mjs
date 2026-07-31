@@ -34,6 +34,11 @@ process.stdin.setEncoding("utf8");
 let prompt = "";
 for await (const chunk of process.stdin) prompt += chunk;
 
+if (prompt.includes("EXIT_NONZERO")) {
+  process.stderr.write("synthetic CLI failure with private detail\n");
+  process.exit(42);
+}
+
 if (prompt.includes("PROVIDER_AUTH_ERROR")) {
   emit({ type: "system", subtype: "init", session_id: "fake-session", model: "fake", cwd: process.cwd() });
   emit({

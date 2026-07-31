@@ -2,7 +2,7 @@ import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { existsSync, watch } from "node:fs";
-import { describe, expect, it, afterEach } from "vitest";
+import { describe, expect, it, afterEach, vi } from "vitest";
 import { ClaudeDriver } from "../src/adapters/claude/driver";
 import type * as schema from "@agentclientprotocol/sdk";
 
@@ -124,6 +124,22 @@ describe("ClaudeDriver (against a fake claude CLI)", () => {
       code: "AUTHENTICATION_FAILED",
       message: "Claude is not authenticated. Run `claude` and complete sign-in, then try again.",
     });
+  });
+
+  it("never forwards provider stderr through adapter debug logging", async () => {
+    const d = makeDriver();
+    await d.start(tmpdir());
+    process.env.BABY_MENU_ADAPTER_DEBUG = "1";
+    const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await expect(d.prompt("EXIT_NONZERO", () => {}, new AbortController().signal)).rejects.toMatchObject({
+        code: "CLI_EXIT_FAILED",
+      });
+      expect(write.mock.calls.flat().join(" ")).not.toContain("private detail");
+    } finally {
+      write.mockRestore();
+      delete process.env.BABY_MENU_ADAPTER_DEBUG;
+    }
   });
 
   it("surfaces a tool_call and tool_call_update", async () => {

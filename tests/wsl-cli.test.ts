@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { validateWslLaunch, windowsPathToWsl } from "../src/main/wsl-cli";
+import { decodeWslListOutput, listWslDistributions, validateWslLaunch, windowsPathToWsl } from "../src/main/wsl-cli";
 import { resolveDriverSpawn } from "../src/adapters/shared/platform-spawn";
 
 describe("WSL CLI bridge boundaries", () => {
@@ -18,23 +18,32 @@ describe("WSL CLI bridge boundaries", () => {
     expect(windowsPathToWsl("\\\\server\\share\\workspace")).toBeNull();
   });
 
-  it("validates workspace access before probing the provider", () => {
-    const run = vi.fn()
-      .mockReturnValueOnce({ status: 0, stdout: "Ubuntu\n" })
-      .mockReturnValueOnce({ status: 1, stdout: "" });
+  it("decodes the UTF-16LE distribution inventory emitted by wsl.exe", async () => {
+    const stdout = Buffer.from("\uFEFFUbuntu\r\nDebian\r\n", "utf16le");
+    expect(decodeWslListOutput(stdout)).toBe("Ubuntu\r\nDebian\r\n");
+    await expect(listWslDistributions(async () => ({ status: 0, stdout }))).resolves.toEqual({
+      ok: true,
+      distributions: ["Ubuntu", "Debian"],
+    });
+  });
 
-    expect(validateWslLaunch("Ubuntu", "codex", "C:\\Work\\baby-menu", run)).toContain("cannot access this workspace");
+  it("validates workspace access before probing the provider", async () => {
+    const run = vi.fn()
+      .mockResolvedValueOnce({ status: 0, stdout: Buffer.from("Ubuntu\n") })
+      .mockResolvedValueOnce({ status: 1, stdout: Buffer.alloc(0) });
+
+    await expect(validateWslLaunch("Ubuntu", "codex", "C:\\Work\\baby-menu", run)).resolves.toContain("cannot access this workspace");
     expect(run).toHaveBeenNthCalledWith(2, ["--distribution", "Ubuntu", "--cd", "/mnt/c/Work/baby-menu", "--exec", "true"]);
     expect(run).toHaveBeenCalledTimes(2);
   });
 
-  it("probes the provider from the validated workspace", () => {
+  it("probes the provider from the validated workspace", async () => {
     const run = vi.fn()
-      .mockReturnValueOnce({ status: 0, stdout: "Ubuntu\n" })
-      .mockReturnValueOnce({ status: 0, stdout: "" })
-      .mockReturnValueOnce({ status: 0, stdout: "/usr/bin/claude\n" });
+      .mockResolvedValueOnce({ status: 0, stdout: Buffer.from("Ubuntu\n") })
+      .mockResolvedValueOnce({ status: 0, stdout: Buffer.alloc(0) })
+      .mockResolvedValueOnce({ status: 0, stdout: Buffer.from("/usr/bin/claude\n") });
 
-    expect(validateWslLaunch("Ubuntu", "claude", "D:\\workspace", run)).toBeNull();
+    await expect(validateWslLaunch("Ubuntu", "claude", "D:\\workspace", run)).resolves.toBeNull();
     expect(run).toHaveBeenNthCalledWith(3, ["--distribution", "Ubuntu", "--cd", "/mnt/d/workspace", "--exec", "which", "claude"]);
   });
 

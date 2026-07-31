@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import type * as schema from "@agentclientprotocol/sdk";
 import { AdapterTurnError, providerCliStartError, type SessionDriver, type UpdateSink } from "../shared/types.js";
 import { LineReader } from "../shared/line-reader.js";
@@ -40,7 +40,7 @@ export class CodexDriver implements SessionDriver {
   private readonly model: string | null;
   private cwd: string | null = null;
   private threadId: string | null = null;
-  private child: ChildProcessWithoutNullStreams | null = null;
+  private child: ChildProcess | null = null;
   private activePrompt: Promise<schema.StopReason> | null = null;
   private activeCancel: (() => void) | null = null;
 
@@ -81,12 +81,12 @@ export class CodexDriver implements SessionDriver {
       ? ["exec", "resume", this.threadId, ...common]
       : ["exec", ...common, "--color", "never"];
 
-    logDebug(SCOPE, "spawn", this.command, args.join(" "), "<prompt via stdin>");
+    logDebug(SCOPE, "spawn", this.threadId ? "resume" : "new");
     const env = childEnv();
     const launch = resolveDriverSpawn(this.command, args, { env, cwd });
     const child = spawn(launch.command, launch.args, {
       cwd,
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "ignore"],
       env: { ...env, ...launch.env },
       ...launch.options,
     });
@@ -142,7 +142,7 @@ export class CodexDriver implements SessionDriver {
           try {
             event = JSON.parse(line) as CodexExecEvent;
           } catch {
-            logDebug(SCOPE, "non-json stdout line", line);
+            logDebug(SCOPE, "ignored non-json stdout line");
             continue;
           }
           // The driver owns thread id capture (the mapper is pure/ACP-only).
@@ -160,8 +160,6 @@ export class CodexDriver implements SessionDriver {
           }
         }
       });
-      child.stderr.setEncoding("utf8");
-      child.stderr.on("data", (chunk: string) => logDebug(SCOPE, "stderr", chunk.trimEnd()));
       child.stdin.on("error", () => {
         if (settled || cancelled || transportError) return;
         transportError = new AdapterTurnError("CLI_START_FAILED", "Codex CLI could not receive the prompt.");
