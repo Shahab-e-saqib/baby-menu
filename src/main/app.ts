@@ -93,6 +93,19 @@ if (!windowsAdapterLaunchRequest && process.platform === "win32") {
   );
 }
 
+// Packaged Windows uses the explicit runtime root for Electron's own profile as
+// well as Baby Menu's data. This must happen before ProcessSingleton is created,
+// otherwise an isolated validation home can still collide with a real profile.
+// Keep this Windows-only so macOS/POSIX retain their existing Electron profile
+// behavior.
+const earlyWindowsRuntimePaths =
+  !windowsAdapterLaunchRequest && process.platform === "win32" && app.isPackaged
+    ? resolveBabyMenuRuntimePaths(getRepoRoot())
+    : null;
+if (earlyWindowsRuntimePaths) {
+  app.setPath("userData", earlyWindowsRuntimePaths.appDataRoot);
+}
+
 // Single-instance lock: only the first process creates the tray, popover,
 // runtime, and background services. A second process quits immediately.
 let popoverWindow: BrowserWindow | null = null;
