@@ -14,6 +14,7 @@ type TrayOptions = {
 const createBabyMenuTray = vi.fn(
   (_onClick: (bounds: Rectangle) => void, _options: TrayOptions) => trayInstance,
 );
+const mkdirSync = vi.hoisted(() => vi.fn());
 
 const electronApp = {
   commandLine: { appendSwitch: vi.fn() },
@@ -104,6 +105,10 @@ vi.mock("electron", () => ({
   protocol: { registerSchemesAsPrivileged: vi.fn(), handle: vi.fn() },
   screen: { getDisplayNearestPoint: vi.fn(() => ({ workArea: { x: 0, y: 0, width: 1440, height: 900 } })) },
   shell: { openExternal: vi.fn(async () => undefined) },
+}));
+vi.mock("node:fs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:fs")>()),
+  mkdirSync,
 }));
 
 vi.mock("../src/main/ipc", () => ({ registerIpcHandlers }));
@@ -384,9 +389,15 @@ describe("Windows shell lifecycle", () => {
 
     await import("../src/main/app");
 
+    expect(mkdirSync).toHaveBeenCalledExactlyOnceWith("/home/test-user/.baby-menu", {
+      recursive: true,
+      mode: 0o700,
+    });
     expect(electronApp.setPath).toHaveBeenCalledExactlyOnceWith("userData", "/home/test-user/.baby-menu");
+    const mkdirOrder = mkdirSync.mock.invocationCallOrder[0];
     const setPathOrder = electronApp.setPath.mock.invocationCallOrder[0];
     const lockOrder = electronApp.requestSingleInstanceLock.mock.invocationCallOrder[0];
+    expect(mkdirOrder).toBeLessThan(setPathOrder);
     expect(setPathOrder).toBeLessThan(lockOrder);
   });
 

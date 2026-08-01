@@ -1,4 +1,5 @@
 import { app, BrowserWindow, screen, shell, type Rectangle } from "electron";
+import { mkdirSync } from "node:fs";
 import { basename, join, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BabyMenuCustomAgentInput, BabyMenuSettings } from "../shared/contracts";
@@ -103,6 +104,7 @@ const earlyWindowsRuntimePaths =
     ? resolveBabyMenuRuntimePaths(getRepoRoot())
     : null;
 if (earlyWindowsRuntimePaths) {
+  mkdirSync(earlyWindowsRuntimePaths.appDataRoot, { recursive: true, mode: 0o700 });
   app.setPath("userData", earlyWindowsRuntimePaths.appDataRoot);
 }
 
