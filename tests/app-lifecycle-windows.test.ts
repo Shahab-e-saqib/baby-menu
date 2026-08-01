@@ -194,6 +194,7 @@ describe("Windows shell lifecycle", () => {
     browserWindowInstance.isDestroyed.mockReturnValue(false);
     browserWindowInstance.isVisible.mockReturnValue(false);
     trayInstance.getBounds.mockReturnValue({ x: 100, y: 10, width: 24, height: 24 });
+    delete process.env.BABY_MENU_PACKAGED_TEST_HOME;
     delete process.env.BABY_MENU_REMOTE_DEBUGGING_PORT;
     Object.defineProperty(process, "platform", {
       configurable: true,
@@ -202,6 +203,7 @@ describe("Windows shell lifecycle", () => {
   });
 
   afterEach(() => {
+    delete process.env.BABY_MENU_PACKAGED_TEST_HOME;
     delete process.env.BABY_MENU_REMOTE_DEBUGGING_PORT;
     Object.defineProperty(process, "platform", {
       configurable: true,
@@ -377,6 +379,8 @@ describe("Windows shell lifecycle", () => {
     await import("../src/main/app");
 
     expect(electronApp.setAppUserModelId).toHaveBeenCalledExactlyOnceWith("com.kunchenguid.baby-menu");
+    expect(mkdirSync).not.toHaveBeenCalled();
+    expect(electronApp.setPath).not.toHaveBeenCalled();
   });
 
   it("sets packaged Windows userData before acquiring the singleton lock", async () => {
@@ -386,14 +390,18 @@ describe("Windows shell lifecycle", () => {
     });
     electronApp.isPackaged = true;
     electronApp.requestSingleInstanceLock.mockReturnValue(true);
+    process.env.BABY_MENU_PACKAGED_TEST_HOME = "/isolated/test-home";
 
     await import("../src/main/app");
 
-    expect(mkdirSync).toHaveBeenCalledExactlyOnceWith("/home/test-user/.baby-menu", {
+    expect(mkdirSync).toHaveBeenCalledExactlyOnceWith("/isolated/test-home/.baby-menu", {
       recursive: true,
       mode: 0o700,
     });
-    expect(electronApp.setPath).toHaveBeenCalledExactlyOnceWith("userData", "/home/test-user/.baby-menu");
+    expect(electronApp.setPath).toHaveBeenCalledExactlyOnceWith(
+      "userData",
+      "/isolated/test-home/.baby-menu",
+    );
     const mkdirOrder = mkdirSync.mock.invocationCallOrder[0];
     const setPathOrder = electronApp.setPath.mock.invocationCallOrder[0];
     const lockOrder = electronApp.requestSingleInstanceLock.mock.invocationCallOrder[0];

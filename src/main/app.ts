@@ -99,8 +99,12 @@ if (!windowsAdapterLaunchRequest && process.platform === "win32") {
 // otherwise an isolated validation home can still collide with a real profile.
 // Keep this Windows-only so macOS/POSIX retain their existing Electron profile
 // behavior.
+const packagedWindowsTestHome = process.env.BABY_MENU_PACKAGED_TEST_HOME?.trim();
 const earlyWindowsRuntimePaths =
-  !windowsAdapterLaunchRequest && process.platform === "win32" && app.isPackaged
+  !windowsAdapterLaunchRequest &&
+  process.platform === "win32" &&
+  app.isPackaged &&
+  packagedWindowsTestHome
     ? resolveBabyMenuRuntimePaths(getRepoRoot())
     : null;
 if (earlyWindowsRuntimePaths) {
