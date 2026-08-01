@@ -1,0 +1,40 @@
+name: Release metadata policy
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+    paths:
+      - .release-please-manifest.json
+      - CHANGELOG.md
+      - package.json
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  check:
+    name: Human metadata changes require gated files
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.pull_request.user.login != 'release-please[bot]' &&
+      (github.event.pull_request.user.login != 'github-actions[bot]' ||
+      !startsWith(github.event.pull_request.head.ref, 'release-please--'))
+    steps:
+      - name: Require a non-release-metadata change
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -eu
+          files=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" --jq '.[].filename')
+          if printf '%s\n' "$files" | grep -qvE '^(\.release-please-manifest\.json|CHANGELOG\.md|package\.json)$'; then
+            echo "PR includes a file covered by the normal pull-request gates."
+            exit 0
+          fi
+          {
+            echo "::error::Human-authored release metadata changes cannot be submitted alone."
+            echo "Include the source, test, configuration, or documentation change that requires the metadata update."
+          } >&2
+          exit 1

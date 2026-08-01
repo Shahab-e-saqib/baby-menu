@@ -35,8 +35,7 @@ See the [no-mistakes quick start](https://kunchenguid.github.io/no-mistakes/star
 - Run `pnpm generate:contracts` and commit `extensions/babymenu-env.d.ts` after changing extension-facing types or `src/shared/extension-contract-names.ts`.
 - Run `pnpm package:mac` when changing packaging, runtime paths, extension compilation, native dependencies, or release behavior.
 - Local `pnpm package:mac` builds intentionally produce `Baby Menu Dev.app` with bundle id `com.kunchenguid.baby-menu.dev`; release automation uses `electron-builder.yml` directly for the production `Baby Menu.app` identity.
-- Keep universal macOS packaging compatible with both Intel and Apple Silicon Macs; native prebuilt packages must be installed for `x64` and `arm64` and preserved in `electron-builder.yml` `x64ArchFiles` when electron-builder merges the app.
-- Keep `electron-builder` at `26.8.2` or newer so pnpm-deduped dependencies are included correctly in packaged builds.
+- Follow the universal native-dependency, build-only esbuild exclusion, and packaged runtime verification constraints in [`docs/development.md`](docs/development.md#packaging).
 - Keep `pnpm-lock.yaml` changes with dependency changes.
 - Do not commit generated build output, release artifacts, runtime caches, or dev extension workspaces.
 - Do not hand-edit release-please metadata such as `CHANGELOG.md` or `.release-please-manifest.json`.
@@ -47,12 +46,12 @@ See the [no-mistakes quick start](https://kunchenguid.github.io/no-mistakes/star
 Baby Menu releases are proposed by release-please after conventional commits land on `main`.
 Use prefixes such as `feat:` and `fix:` so release-please can choose the version bump and release notes.
 Mark breaking changes with `!` in the commit type or a `BREAKING CHANGE:` footer.
-Merging the release-please PR creates the version tag and GitHub Release.
-The release-please workflow then builds and uploads the macOS DMG, then updates `kunchenguid/homebrew-tap` with the release SHA.
-The generated Homebrew Cask quits Baby Menu during upgrade and relaunches it after installation only when the app was already running before uninstall started.
-Maintainers must keep `HOMEBREW_TAP_TOKEN` configured with write access to `kunchenguid/homebrew-tap` for that update step.
+Merging the release-please PR creates the version tag and a draft GitHub Release.
+The release-please workflow builds the production-identity universal macOS app, retains the existing credential-free ad-hoc bundle signature, verifies the packaged runtime, and uploads the DMG to that draft.
+The draft and its artifact are internal previews only: the workflow never publishes the release or updates a Homebrew tap, and it does not use Developer ID signing, notarization, signing credentials, or any other public-trust mechanism.
 Maintainers must also keep the `BABY_MENU_UMAMI_WEBSITE_ID` GitHub Actions repository variable configured for packaged-release telemetry; it is intentionally a variable rather than a secret because the id is baked into the app and sent in Umami payloads.
-Do not manually rewrite the tap from this repo outside that workflow unless you are repairing a failed release.
+
+To create an internal preview, merge the release-please PR and require the `release-please` workflow's macOS job to pass. Leave the generated release unpublished and do not upload a replacement DMG, publish the draft, or update a tap from this workflow.
 
 ## Questions
 

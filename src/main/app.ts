@@ -1,5 +1,5 @@
 import { app, BrowserWindow, screen, shell, type Rectangle } from "electron";
-import { join, win32 } from "node:path";
+import { basename, join, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BabyMenuCustomAgentInput, BabyMenuSettings } from "../shared/contracts";
 import { getRepoRoot, isUncWindowsLaunch } from "../shared/paths";
@@ -34,6 +34,15 @@ import {
 } from "./windows-adapter-launcher";
 import { createLayoutModuleRegistry, createWidgetModuleRegistry } from "./widget-module-registry";
 import { registerBabyMenuProtocolHandlers, registerBabyMenuProtocolSchemes } from "./widget-protocol";
+
+export function isProductionPackageExecutable(
+  executablePath: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return platform === "win32"
+    ? win32.basename(executablePath) === "Baby Menu.exe"
+    : basename(executablePath) === "Baby Menu";
+}
 
 const windowsAdapterLaunchRequest = parseWindowsAdapterLaunchRequest();
 
@@ -279,11 +288,12 @@ export async function startBabyMenuApp(): Promise<void> {
     app.dock?.hide();
   }
 
+  const allowOpenAtLogin = paths.isPackaged && isProductionPackageExecutable(app.getPath("exe"));
   const preferences = createPreferencesService({
     userDataDir: paths.appDataRoot,
     app,
-    defaultOpenAtLogin: paths.isPackaged,
-    allowOpenAtLogin: paths.isPackaged,
+    defaultOpenAtLogin: allowOpenAtLogin,
+    allowOpenAtLogin,
   });
   const persistedPreferences = await preferences.apply();
 

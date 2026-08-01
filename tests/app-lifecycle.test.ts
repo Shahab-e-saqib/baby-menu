@@ -11,7 +11,9 @@ const electronApp = {
   disableHardwareAcceleration: vi.fn(),
   dock: { hide: vi.fn() },
   getAppPath: vi.fn(() => "/repo"),
-  getPath: vi.fn((name: string) => (name === "home" ? "/home/test-user" : "/tmp")),
+  getPath: vi.fn<(name: string) => string>((name) =>
+    name === "home" ? "/home/test-user" : "/tmp",
+  ),
   getVersion: vi.fn(() => "0.0.0-test"),
   getLoginItemSettings: vi.fn(() => ({ openAtLogin: false })),
   setLoginItemSettings: vi.fn(),
@@ -342,6 +344,11 @@ describe("startBabyMenuApp", () => {
 
   it("opts packaged app launches into opening at login by default", async () => {
     electronApp.isPackaged = true;
+    electronApp.getPath.mockImplementation((name: string) => {
+      if (name === "home") return "/home/test-user";
+      if (name === "exe") return "/Applications/Baby Menu.app/Contents/MacOS/Baby Menu";
+      return "/tmp";
+    });
     Object.defineProperty(process, "resourcesPath", {
       configurable: true,
       value: "/Applications/Baby Menu.app/Contents/Resources",
@@ -351,6 +358,20 @@ describe("startBabyMenuApp", () => {
     await appModule.startBabyMenuApp();
 
     expect(electronApp.setLoginItemSettings).toHaveBeenCalledWith({ openAtLogin: true });
+  });
+
+  it("recognizes production package executables on macOS and Windows", async () => {
+    const { isProductionPackageExecutable } = await import("../src/main/app");
+
+    expect(
+      isProductionPackageExecutable("/Applications/Baby Menu.app/Contents/MacOS/Baby Menu", "darwin"),
+    ).toBe(true);
+    expect(isProductionPackageExecutable("C:\\Program Files\\Baby Menu\\Baby Menu.exe", "win32")).toBe(
+      true,
+    );
+    expect(
+      isProductionPackageExecutable("C:\\Program Files\\Baby Menu Dev\\Baby Menu Dev.exe", "win32"),
+    ).toBe(false);
   });
 
   it("temporarily uses regular activation policy while the macOS popover is visible", async () => {

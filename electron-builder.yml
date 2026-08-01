@@ -8,6 +8,8 @@ directories:
 files:
   - out/**
   - package.json
+  - '!node_modules/esbuild/**'
+  - '!node_modules/@esbuild/**'
 
 extraResources:
   - from: extensions
@@ -37,7 +39,7 @@ mac:
   identity: null
   hardenedRuntime: false
   gatekeeperAssess: false
-  x64ArchFiles: Contents/Resources/app.asar.unpacked/node_modules/{@esbuild/**,esbuild/**,@tailwindcss/oxide-*/**,lightningcss-*/**,lightningcss/**}
+  x64ArchFiles: Contents/Resources/app.asar.unpacked/node_modules/{@tailwindcss/oxide-*/**,lightningcss-*/**,lightningcss/**}
 
 win:
   icon: assets/app-icon.ico

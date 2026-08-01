@@ -18,12 +18,13 @@
     "build": "electron-vite build && node scripts/build-adapters.mjs",
     "generate:contracts": "node scripts/generate-extension-dts.mjs",
     "generate:windows-icons": "node scripts/generate-windows-icons.mjs",
-    "package:mac": "rm -rf release && pnpm build && electron-builder --mac dir --universal --config electron-builder.dev.yml && node scripts/adhoc-sign-mac-app.mjs \"release/mac-universal/Baby Menu Dev.app\"",
+    "package:mac": "rm -rf release && pnpm build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --universal --config electron-builder.dev.yml && node scripts/adhoc-sign-mac-app.mjs \"release/mac-universal/Baby Menu Dev.app\"",
     "package:win": "node -e \"require('node:fs').rmSync('release',{recursive:true,force:true})\" && pnpm build && electron-builder --win --x64 --config electron-builder.dev.yml",
     "dist:mac": "pnpm package:mac && node scripts/create-dmg.mjs \"release/mac-universal/Baby Menu Dev.app\"",
     "test": "vitest run tests",
     "test:e2e": "vitest run tests/e2e-*.test.ts",
     "test:e2e:grok-popover": "node scripts/e2e-grok-popover.mjs",
+    "test:e2e:packaged-mac": "node scripts/e2e-packaged-mac-app.mjs",
     "lint": "tsc -p tsconfig.json --noEmit",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
@@ -49,6 +50,7 @@
     "typescript": "6.0.3"
   },
   "devDependencies": {
+    "@electron/asar": "3.4.1",
     "@tailwindcss/vite": "^4.3.0",
     "@testing-library/react": "16.3.2",
     "@types/node": "25.8.0",
