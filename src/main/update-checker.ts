@@ -1,9 +1,9 @@
 import type { UpdateStatus } from "../shared/contracts";
 
-// The app ships through GitHub Releases (and the Homebrew cask built from them),
-// so "is there a newer version" is answered by the public GitHub releases API.
-// There is no in-app auto-updater; the indicator just points the user at the
-// release page, which is where the cask upgrade instructions live.
+// "Is there a newer version" is answered by the public GitHub Releases API, so
+// unpublished internal-preview drafts are intentionally invisible here. There
+// is no in-app auto-updater; the indicator points to the public release page,
+// which owns the install-channel upgrade instructions.
 const DEFAULT_REPO = "kunchenguid/baby-menu";
 // Matches the cadence used elsewhere in Kun's apps: a check at most every 4 hours.
 const DEFAULT_INTERVAL_MS = 4 * 60 * 60 * 1000;
