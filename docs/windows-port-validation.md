@@ -61,6 +61,7 @@ Item 10 records the platform-portable subset CI runs on a Windows host.
 
 14. **AppUserModelID and single-instance lock** (`src/main/app.ts`) — `app.setAppUserModelId` runs before `app.whenReady()` on Windows, using `com.kunchenguid.baby-menu` for the production executable and `com.kunchenguid.baby-menu.dev` for source/dev or packaged **Baby Menu Dev** previews.
     `app.requestSingleInstanceLock()` ensures only the first process creates the tray/popover/runtime; a second instance quits after requesting that the primary show or focus its popover. Activations received before tray creation are queued and coalesced until startup is ready.
+    For packaged Windows validation only, an explicit `BABY_MENU_PACKAGED_TEST_HOME` moves both Baby Menu's mutable root and Electron's `userData` beneath the isolated test profile before the singleton lock is requested. Normal packaged launches and macOS/POSIX behavior are unchanged.
     Cross-platform unit coverage via the broader app-support test suite.
 
 15. **Windows taskbar-aware popover geometry** (`src/main/popover.ts`, `src/main/app.ts`) — `calculatePopoverBounds` computes the popover position against the taskbar-aware `workArea` (not the full screen) of the display nearest the tray icon.
@@ -180,7 +181,11 @@ powershell -File scripts/windows-validate.ps1 -InstallerPath <InstallerPath> -In
 powershell -File scripts/windows-validate.ps1 -InstallerPath <InstallerPath> -InstallDir <InstallDir> -UserDataDir <UserDataDir> -AllowInstall -AllowUninstall -AllowLaunch
 ```
 
+Do not run the mutation command while Smart App Control is Off. Whether and when to execute the unsigned installer remains a captain-owned acceptance decision.
+
 Evidence JSON (pass/fail/skip with secret redaction) is written under `<InstallDir>-diagnostic/evidence-<timestamp>.json` when mutation flags are provided. In `-WhatIf` plan-only mode, evidence is returned in-memory and rendered to stdout with a `PlanOnly=true` marker and no files are created.
+
+The registry check accepts only the versioned NSIS display names `Baby Menu <version>` and `Baby Menu Dev <version>`; similarly prefixed product names do not match. During bounded launch, the runner sets `BABY_MENU_PACKAGED_TEST_HOME` beneath `UserDataDir`, proves the resulting `.baby-menu` root remains contained there, and continues comparing the real profile manifests before and after launch to detect any mutation.
 
 **Boundary:** All checks in the runner are either automated deterministic assertions (pass/fail) or explicitly marked `skip` with `ManualGuidance`. The following are genuinely manual GUI-only checks that a human must verify:
 - tray icon appearance on the taskbar
