@@ -135,6 +135,22 @@ describe("windows-native-validation", () => {
     }
   });
 
+  it("accepts versioned product names without accepting prefix-confusable names", () => {
+    expect(content).toContain("Test-ProductUninstallDisplayName");
+    expect(content).toContain("ProductVersionPattern");
+    const versionedName = /^(Baby Menu|Baby Menu Dev)\s+\d+(?:\.\d+){1,3}(?:[-+][0-9A-Za-z.-]+)?$/;
+    expect(versionedName.test("Baby Menu 0.1.21")).toBe(true);
+    expect(versionedName.test("Baby Menu Dev 0.1.21")).toBe(true);
+    expect(versionedName.test("Baby Menu Evil 0.1.21")).toBe(false);
+    expect(versionedName.test("Baby Menu 0.1.21-extra-name")).toBe(true);
+  });
+
+  it("passes the packaged test-home override and records containment", () => {
+    expect(content).toContain("BABY_MENU_PACKAGED_TEST_HOME");
+    expect(content).toContain("bounded-launch-packaged-home-contained");
+    expect(content).toContain("effectivePackagedRoot");
+  });
+
   it("creates and verifies isolated sentinel file with SHA256 hash comparison", () => {
     expect(content).toMatch(/SentinelHash/);
     expect(content).toMatch(/Get-FileHash/);
@@ -629,7 +645,7 @@ describe("windows-native-validation", () => {
     expect(content).toContain("$script:ProductNames = @('Baby Menu', 'Baby Menu Dev')");
     expect(content).toContain("$script:ExecutableNames = @('Baby Menu.exe', 'Baby Menu Dev.exe', 'BabyMenu.exe')");
     expect(content).toContain("'Uninstall Baby Menu Dev.exe'");
-    expect(content).toMatch(/\$script:ProductNames -contains \$displayName/);
+    expect(content).toContain("Test-ProductUninstallDisplayName -DisplayName $displayName");
   });
 
   it("enumerates all processes under InstallDir via Win32_Process for survivor cleanup", () => {

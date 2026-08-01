@@ -59,7 +59,8 @@ export function createBabyMenuRuntimePaths(options: CreateBabyMenuRuntimePathsOp
   if (!options.homeDir) throw new Error("homeDir is required for packaged Baby Menu paths");
   if (!options.resourcesPath) throw new Error("resourcesPath is required for packaged Baby Menu paths");
 
-  const appDataRoot = join(options.homeDir, ".baby-menu");
+  const homeDir = resolvePackagedHomeDir(options.homeDir, options.env);
+  const appDataRoot = join(homeDir, ".baby-menu");
   const cacheDir = join(appDataRoot, "cache");
   const extensionsDir = join(appDataRoot, "extensions");
   return {

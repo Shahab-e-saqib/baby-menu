@@ -14,6 +14,7 @@ type TrayOptions = {
 const createBabyMenuTray = vi.fn(
   (_onClick: (bounds: Rectangle) => void, _options: TrayOptions) => trayInstance,
 );
+const mkdirSync = vi.hoisted(() => vi.fn());
 
 const electronApp = {
   commandLine: { appendSwitch: vi.fn() },
@@ -37,6 +38,7 @@ const electronApp = {
   exit: vi.fn(),
   requestSingleInstanceLock: vi.fn(() => true),
   setAppUserModelId: vi.fn(),
+  setPath: vi.fn(),
 };
 
 const browserWindowInstance = {
@@ -103,6 +105,10 @@ vi.mock("electron", () => ({
   protocol: { registerSchemesAsPrivileged: vi.fn(), handle: vi.fn() },
   screen: { getDisplayNearestPoint: vi.fn(() => ({ workArea: { x: 0, y: 0, width: 1440, height: 900 } })) },
   shell: { openExternal: vi.fn(async () => undefined) },
+}));
+vi.mock("node:fs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:fs")>()),
+  mkdirSync,
 }));
 
 vi.mock("../src/main/ipc", () => ({ registerIpcHandlers }));
@@ -179,11 +185,16 @@ describe("Windows shell lifecycle", () => {
       if (name === "exe") return "C:\\Program Files\\Baby Menu\\Baby Menu.exe";
       return "/tmp";
     });
+    Object.defineProperty(process, "resourcesPath", {
+      configurable: true,
+      value: "/tmp/resources",
+    });
     electronApp.requestSingleInstanceLock.mockReset();
     electronApp.requestSingleInstanceLock.mockReturnValue(true);
     browserWindowInstance.isDestroyed.mockReturnValue(false);
     browserWindowInstance.isVisible.mockReturnValue(false);
     trayInstance.getBounds.mockReturnValue({ x: 100, y: 10, width: 24, height: 24 });
+    delete process.env.BABY_MENU_PACKAGED_TEST_HOME;
     delete process.env.BABY_MENU_REMOTE_DEBUGGING_PORT;
     Object.defineProperty(process, "platform", {
       configurable: true,
@@ -192,6 +203,7 @@ describe("Windows shell lifecycle", () => {
   });
 
   afterEach(() => {
+    delete process.env.BABY_MENU_PACKAGED_TEST_HOME;
     delete process.env.BABY_MENU_REMOTE_DEBUGGING_PORT;
     Object.defineProperty(process, "platform", {
       configurable: true,
@@ -367,6 +379,34 @@ describe("Windows shell lifecycle", () => {
     await import("../src/main/app");
 
     expect(electronApp.setAppUserModelId).toHaveBeenCalledExactlyOnceWith("com.kunchenguid.baby-menu");
+    expect(mkdirSync).not.toHaveBeenCalled();
+    expect(electronApp.setPath).not.toHaveBeenCalled();
+  });
+
+  it("sets packaged Windows userData before acquiring the singleton lock", async () => {
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      value: "win32",
+    });
+    electronApp.isPackaged = true;
+    electronApp.requestSingleInstanceLock.mockReturnValue(true);
+    process.env.BABY_MENU_PACKAGED_TEST_HOME = "/isolated/test-home";
+
+    await import("../src/main/app");
+
+    expect(mkdirSync).toHaveBeenCalledExactlyOnceWith("/isolated/test-home/.baby-menu", {
+      recursive: true,
+      mode: 0o700,
+    });
+    expect(electronApp.setPath).toHaveBeenCalledExactlyOnceWith(
+      "userData",
+      "/isolated/test-home/.baby-menu",
+    );
+    const mkdirOrder = mkdirSync.mock.invocationCallOrder[0];
+    const setPathOrder = electronApp.setPath.mock.invocationCallOrder[0];
+    const lockOrder = electronApp.requestSingleInstanceLock.mock.invocationCallOrder[0];
+    expect(mkdirOrder).toBeLessThan(setPathOrder);
+    expect(setPathOrder).toBeLessThan(lockOrder);
   });
 
   it("sets the dev Windows AppUserModelID for a packaged preview", async () => {

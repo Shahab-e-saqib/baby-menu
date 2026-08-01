@@ -56,6 +56,19 @@ trap {
 if (-not $DiagnosticDir) { $DiagnosticDir = "$InstallDir-diagnostic" }
 $script:Checks = New-Object System.Collections.ArrayList
 $script:ProductNames = @('Baby Menu', 'Baby Menu Dev')
+$script:ProductVersionPattern = '\d+(?:\.\d+){1,3}(?:[-+][0-9A-Za-z.-]+)?'
+
+function Test-ProductUninstallDisplayName {
+    param([string]$DisplayName)
+    foreach ($productName in $script:ProductNames) {
+        $escapedProductName = [regex]::Escape($productName)
+        if ($DisplayName -match "^$escapedProductName\s+$($script:ProductVersionPattern)$") {
+            return $true
+        }
+    }
+    return $false
+}
+
 $script:ExecutableNames = @('Baby Menu.exe', 'Baby Menu Dev.exe', 'BabyMenu.exe')
 
 function Add-CheckResult {
@@ -325,7 +338,7 @@ function Invoke-RegistryUninstallCheck {
         $subKeys = Get-ChildItem -Path $uninstallKey -ErrorAction SilentlyContinue
         foreach ($sk in $subKeys) {
             $displayName = (Get-ItemProperty -Path $sk.PSPath -Name 'DisplayName' -ErrorAction SilentlyContinue).DisplayName
-            if ($displayName -and $script:ProductNames -contains $displayName) {
+            if ($displayName -and (Test-ProductUninstallDisplayName -DisplayName $displayName)) {
                 $found = $true
                 $version = (Get-ItemProperty -Path $sk.PSPath -Name 'DisplayVersion' -ErrorAction SilentlyContinue).DisplayVersion
                 $publisher = (Get-ItemProperty -Path $sk.PSPath -Name 'Publisher' -ErrorAction SilentlyContinue).Publisher
@@ -498,10 +511,11 @@ function Invoke-BoundedLaunchCheck {
     # Create isolated child-profile directories under UserDataDir
     $profileIsolationRoot = Join-Path $UserDataDir "child-profile"
     $isolatedDirs = @{
-        APPDATA      = Join-Path $profileIsolationRoot "AppData-Roaming"
-        LOCALAPPDATA = Join-Path $profileIsolationRoot "AppData-Local"
-        USERPROFILE  = Join-Path $profileIsolationRoot "UserProfile"
-        HOME         = Join-Path $profileIsolationRoot "Home"
+        APPDATA                       = Join-Path $profileIsolationRoot "AppData-Roaming"
+        LOCALAPPDATA                  = Join-Path $profileIsolationRoot "AppData-Local"
+        USERPROFILE                   = Join-Path $profileIsolationRoot "UserProfile"
+        HOME                          = Join-Path $profileIsolationRoot "Home"
+        BABY_MENU_PACKAGED_TEST_HOME = Join-Path $profileIsolationRoot "UserProfile"
     }
 
     # Verify isolated paths are under UserDataDir
@@ -522,7 +536,7 @@ function Invoke-BoundedLaunchCheck {
     }
 
     # Snapshot parent environment, set isolated paths, then launch
-    $savedEnv = Backup-Environment -Variables @('APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'HOME')
+    $savedEnv = Backup-Environment -Variables @('APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'HOME', 'BABY_MENU_PACKAGED_TEST_HOME')
 
     # Capture manifests of real profile subdirectories before any env modification
     $manifestPaths = @()
@@ -553,6 +567,14 @@ function Invoke-BoundedLaunchCheck {
         foreach ($entry in $isolatedDirs.GetEnumerator()) {
             [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, 'Process')
         }
+        $testHomeCanon = [System.IO.Path]::GetFullPath($isolatedDirs['BABY_MENU_PACKAGED_TEST_HOME']).TrimEnd('\')
+        $effectivePackagedRoot = [System.IO.Path]::GetFullPath(
+            (Join-Path $isolatedDirs['BABY_MENU_PACKAGED_TEST_HOME'] '.baby-menu')
+        ).TrimEnd('\')
+        if (-not $effectivePackagedRoot.StartsWith("$testHomeCanon\", [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Packaged test-home root escaped the isolated profile root'
+        }
+        Add-CheckResult -Name 'bounded-launch-packaged-home-contained' -Status 'pass' -Detail 'Packaged runtime home is configured beneath the isolated test profile'
         # Log only the root isolation path, never the individual values
         Write-Host "  [EXEC] Isolated profile root: $profileIsolationRoot"
 

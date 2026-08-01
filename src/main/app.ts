@@ -1,4 +1,5 @@
 import { app, BrowserWindow, screen, shell, type Rectangle } from "electron";
+import { mkdirSync } from "node:fs";
 import { basename, join, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BabyMenuCustomAgentInput, BabyMenuSettings } from "../shared/contracts";
@@ -91,6 +92,24 @@ if (!windowsAdapterLaunchRequest && process.platform === "win32") {
   app.setAppUserModelId(
     isDevIdentity ? "com.kunchenguid.baby-menu.dev" : "com.kunchenguid.baby-menu",
   );
+}
+
+// Packaged Windows uses the explicit runtime root for Electron's own profile as
+// well as Baby Menu's data. This must happen before ProcessSingleton is created,
+// otherwise an isolated validation home can still collide with a real profile.
+// Keep this Windows-only so macOS/POSIX retain their existing Electron profile
+// behavior.
+const packagedWindowsTestHome = process.env.BABY_MENU_PACKAGED_TEST_HOME?.trim();
+const earlyWindowsRuntimePaths =
+  !windowsAdapterLaunchRequest &&
+  process.platform === "win32" &&
+  app.isPackaged &&
+  packagedWindowsTestHome
+    ? resolveBabyMenuRuntimePaths(getRepoRoot())
+    : null;
+if (earlyWindowsRuntimePaths) {
+  mkdirSync(earlyWindowsRuntimePaths.appDataRoot, { recursive: true, mode: 0o700 });
+  app.setPath("userData", earlyWindowsRuntimePaths.appDataRoot);
 }
 
 // Single-instance lock: only the first process creates the tray, popover,

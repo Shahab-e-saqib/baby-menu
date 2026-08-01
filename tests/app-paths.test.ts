@@ -33,6 +33,19 @@ describe("Baby Menu runtime paths", () => {
     });
   });
 
+  it("uses the packaged test-home override for isolated validation roots", () => {
+    const paths = createBabyMenuRuntimePaths({
+      isPackaged: true,
+      sourceRoot: "/ignored/source",
+      homeDir: "/Users/real-user",
+      resourcesPath: "/Resources",
+      env: { BABY_MENU_PACKAGED_TEST_HOME: "/validation/UserProfile" },
+    });
+
+    expect(paths.appDataRoot).toBe("/validation/UserProfile/.baby-menu");
+    expect(paths.databasePath).toBe("/validation/UserProfile/.baby-menu/baby-menu.db");
+  });
+
   it("keeps packaged mutable state under a home dot directory and templates under Resources", () => {
     const paths = createBabyMenuRuntimePaths({
       isPackaged: true,
