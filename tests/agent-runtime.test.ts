@@ -412,6 +412,7 @@ describe("agent runtime defaults", () => {
       ensureRuntime: () => Promise<{
         ensureSession: () => Promise<object>;
         startTurn: () => AcpRuntimeTurn;
+        close: ReturnType<typeof vi.fn>;
       }>;
       collectTurnOutput: () => Promise<string>;
     };
@@ -425,10 +426,16 @@ describe("agent runtime defaults", () => {
       save: vi.fn(async () => ({ ok: true })),
       rollback: vi.fn(async () => ({ ok: true })),
     }));
-    runtimeInternals.ensureRuntime = vi.fn(async () => ({
+    const closeRuntime = vi.fn(async () => undefined);
+    const fakeRuntime = {
       ensureSession: vi.fn(async () => ({})),
       startTurn: vi.fn(() => fakeTurn({ events: (async function* () {})(), cancel })),
-    }));
+      close: closeRuntime,
+    };
+    runtimeInternals.ensureRuntime = vi.fn(async () => {
+      (runtime as unknown as { runtime: typeof fakeRuntime }).runtime = fakeRuntime;
+      return fakeRuntime;
+    });
     const collectTurnOutput = vi.fn(() => output);
     runtimeInternals.collectTurnOutput = collectTurnOutput;
 
@@ -437,6 +444,11 @@ describe("agent runtime defaults", () => {
 
     await expect(runtime.cancel()).resolves.toBe(true);
     expect(cancel).toHaveBeenCalledExactlyOnceWith({ reason: "user" });
+    expect(closeRuntime).toHaveBeenCalledExactlyOnceWith({
+      handle: {},
+      reason: "user-cancel",
+      discardPersistentState: undefined,
+    });
     await expect(send).rejects.toThrow("Agent turn was cancelled");
     await expect(runtime.cancel()).resolves.toBe(false);
   });

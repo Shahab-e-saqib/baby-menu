@@ -586,6 +586,13 @@ export class BabyMenuAgentRuntime {
 
       this.activeTurnCancel = async () => {
         await turn.cancel({ reason: "user" });
+        // ACP cancellation stops the backend turn, but a Windows adapter
+        // launcher remains a persistent ACP process unless the runtime is
+        // closed too. Close the owning runtime after forwarding cancellation
+        // so the launcher and its validation-owned descendants are reaped
+        // within the bounded adapter cleanup path. The next turn recreates a
+        // fresh runtime/session; persistent session state remains intact.
+        await this.closeRuntime("user-cancel", undefined, true);
       };
       const output = await this.collectTurnOutput(turn, turnLog, options);
       await turnLog.finish("completed").catch(() => undefined);
