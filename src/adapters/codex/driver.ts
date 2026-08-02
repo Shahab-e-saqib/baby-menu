@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import type * as schema from "@agentclientprotocol/sdk";
 import { AdapterTurnError, providerCliStartError, type SessionDriver, type UpdateSink } from "../shared/types.js";
 import { LineReader } from "../shared/line-reader.js";
@@ -21,6 +22,7 @@ export type CodexDriverOptions = {
    * undefined, no `--model` is passed and codex picks its own default.
    */
   model?: string;
+  resumeThreadPath?: string;
 };
 
 /**
@@ -38,6 +40,7 @@ export type CodexDriverOptions = {
 export class CodexDriver implements SessionDriver {
   private readonly command: string;
   private readonly model: string | null;
+  private readonly resumeThreadPath: string | null;
   private cwd: string | null = null;
   private threadId: string | null = null;
   private child: ChildProcess | null = null;
@@ -47,6 +50,27 @@ export class CodexDriver implements SessionDriver {
   constructor(options: CodexDriverOptions = {}) {
     this.command = options.command ?? "codex";
     this.model = options.model ?? null;
+    this.resumeThreadPath = options.resumeThreadPath ?? null;
+    this.threadId = this.readResumeThread();
+  }
+
+  private readResumeThread(): string | null {
+    if (!this.resumeThreadPath) return null;
+    try {
+      const threadId = readFileSync(this.resumeThreadPath, "utf8").trim();
+      return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(threadId) ? threadId : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private persistResumeThread(): void {
+    if (!this.resumeThreadPath || !this.threadId) return;
+    try {
+      writeFileSync(this.resumeThreadPath, this.threadId, { encoding: "utf8", mode: 0o600 });
+    } catch {
+      return;
+    }
   }
 
   async start(cwd: string): Promise<void> {
@@ -148,6 +172,7 @@ export class CodexDriver implements SessionDriver {
           // The driver owns thread id capture (the mapper is pure/ACP-only).
           if (event.type === "thread.started" && event.thread_id) {
             this.threadId = event.thread_id;
+            this.persistResumeThread();
           }
           const result = mapCodexEvent(event);
           for (const update of result.updates) sink(update);

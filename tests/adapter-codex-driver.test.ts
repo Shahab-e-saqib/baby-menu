@@ -115,6 +115,32 @@ describe("CodexDriver (against a fake codex CLI)", () => {
     });
   });
 
+  it("resumes the cancelled thread after the driver is recreated", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "codex-cancel-resume-"));
+    const resumeThreadPath = join(dir, "thread-id");
+    driver = new CodexDriver({ command: FAKE, resumeThreadPath });
+    await driver.start(tmpdir());
+    const gate = await slowCancelGate();
+    const controller = new AbortController();
+    const firstPrompt = driver.prompt(gate.prompt, () => {}, controller.signal);
+    await waitForFile(resumeThreadPath);
+    controller.abort();
+    await gate.terminated;
+    await gate.release();
+    await expect(firstPrompt).resolves.toBe("cancelled");
+    await driver.dispose();
+
+    driver = new CodexDriver({ command: FAKE, resumeThreadPath });
+    await driver.start(tmpdir());
+    const updates: schema.SessionUpdate[] = [];
+    await driver.prompt("continued", (update) => updates.push(update), new AbortController().signal);
+
+    expect(updates.find((update) => update.sessionUpdate === "agent_message_chunk")).toMatchObject({
+      content: { type: "text", text: "resumed:continued" },
+    });
+    expect(await readFile(resumeThreadPath, "utf8")).toBe("fake-thread");
+  });
+
   it("does not pass --color to `exec resume` (codex rejects it with exit 2)", async () => {
     // Regression: the resume subcommand in codex-cli 0.130.0 does not accept
     // --color, so reusing the first-turn flag list on resume failed every

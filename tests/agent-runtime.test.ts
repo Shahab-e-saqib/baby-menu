@@ -14,6 +14,7 @@ import {
   getAgentRuntimeCwd,
   resolveAgentTimeoutMs,
   resolveDefaultAgentName,
+  shouldCloseRuntimeAfterUserCancel,
   withAgentTimeout,
 } from "../src/main/agent-runtime";
 
@@ -55,6 +56,16 @@ function fakeTurn({
 }
 
 describe("agent runtime defaults", () => {
+  it.each([
+    ["codex", "win32", true],
+    ["codex", "darwin", false],
+    ["codex", "linux", false],
+    ["claude", "win32", false],
+    ["custom", "win32", false],
+  ] as const)("scopes cancellation runtime closure for %s on %s", (agentName, platform, expected) => {
+    expect(shouldCloseRuntimeAfterUserCancel(agentName, platform)).toBe(expected);
+  });
+
   it.each([
     ["claude", "Claude Code", "Claude Code"],
     ["codex", "Codex", "Codex"],
@@ -392,7 +403,7 @@ describe("agent runtime defaults", () => {
     const rootDir = await mkdtemp(join(tmpdir(), "baby-menu-agent-cancel-"));
     const extensionsDir = join(rootDir, "extensions-dev");
     const runtime = new BabyMenuAgentRuntime(rootDir, {
-      agentName: "mock-agent",
+      agentName: "codex",
       paths: {
         extensionsDir,
         agentStateDir: join(rootDir, ".cache", "acp-sessions"),
@@ -442,15 +453,21 @@ describe("agent runtime defaults", () => {
     const send = runtime.send("cancel this turn");
     await waitUntil(() => collectTurnOutput.mock.calls.length === 1);
 
-    await expect(runtime.cancel()).resolves.toBe(true);
-    expect(cancel).toHaveBeenCalledExactlyOnceWith({ reason: "user" });
-    expect(closeRuntime).toHaveBeenCalledExactlyOnceWith({
-      handle: {},
-      reason: "user-cancel",
-      discardPersistentState: undefined,
-    });
-    await expect(send).rejects.toThrow("Agent turn was cancelled");
-    await expect(runtime.cancel()).resolves.toBe(false);
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    try {
+      await expect(runtime.cancel()).resolves.toBe(true);
+      expect(cancel).toHaveBeenCalledExactlyOnceWith({ reason: "user" });
+      expect(closeRuntime).toHaveBeenCalledExactlyOnceWith({
+        handle: {},
+        reason: "user-cancel",
+        discardPersistentState: undefined,
+      });
+      await expect(send).rejects.toThrow("Agent turn was cancelled");
+      await expect(runtime.cancel()).resolves.toBe(false);
+    } finally {
+      if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform);
+    }
   });
 });
 
