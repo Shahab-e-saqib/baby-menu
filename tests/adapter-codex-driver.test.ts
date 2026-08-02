@@ -16,16 +16,21 @@ const FAKE = join(
 function waitForFile(path: string): Promise<void> {
   if (existsSync(path)) return Promise.resolve();
   return new Promise((resolve, reject) => {
+    const finishIfPresent = () => {
+      if (!existsSync(path)) return false;
+      watcher.close();
+      resolve();
+      return true;
+    };
     const watcher = watch(dirname(path), (_event, filename) => {
-      if (filename === basename(path) && existsSync(path)) {
-        watcher.close();
-        resolve();
-      }
+      if (filename === basename(path)) finishIfPresent();
     });
     watcher.on("error", (error) => {
       watcher.close();
       reject(error);
     });
+    // Close the gap between the initial existsSync and watcher attachment.
+    finishIfPresent();
   });
 }
 
