@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.22](https://github.com/Shahab-e-saqib/baby-menu/compare/baby-menu-v0.1.21...baby-menu-v0.1.22) (2026-08-02)
+
+
+### Features
+
+* expand Windows runtime and release foundations ([#3](https://github.com/Shahab-e-saqib/baby-menu/issues/3)) ([ed1fd60](https://github.com/Shahab-e-saqib/baby-menu/commit/ed1fd60211fdf36db6a1caedd2d8e475f086bcb7))
+
+
+### Bug Fixes
+
+* clean up Windows Codex processes after cancellation ([#7](https://github.com/Shahab-e-saqib/baby-menu/issues/7)) ([03f47b8](https://github.com/Shahab-e-saqib/baby-menu/commit/03f47b828165da3d2191086951416dc8a83c984a))
+* harden packaging and release automation ([#5](https://github.com/Shahab-e-saqib/baby-menu/issues/5)) ([133d93a](https://github.com/Shahab-e-saqib/baby-menu/commit/133d93a8b79f4ba0bdb9a7f77543d5b3adf9e3ca))
+* improve unavailable native agent guidance ([#4](https://github.com/Shahab-e-saqib/baby-menu/issues/4)) ([311038e](https://github.com/Shahab-e-saqib/baby-menu/commit/311038edbdd0c94d73285708b4d2885854b88c66))
+* isolate packaged Windows acceptance validation ([#6](https://github.com/Shahab-e-saqib/baby-menu/issues/6)) ([facc9b8](https://github.com/Shahab-e-saqib/baby-menu/commit/facc9b869274ce38dd04216e5bdc939ead312f86))
+
 ## [0.1.21](https://github.com/kunchenguid/baby-menu/compare/baby-menu-v0.1.20...baby-menu-v0.1.21) (2026-07-23)
 
 
