@@ -11,6 +11,7 @@ import {
   type AcpRuntimeTurn,
   type AcpxRuntime,
 } from "acpx/runtime";
+import { CODEX_CANCEL_RESUME_PATH_ENV } from "../adapters/codex/config";
 import type { AgentActiveTurn, AgentChatResult, GitActionResult, GitSessionSnapshot, WorkspaceChange } from "../shared/contracts";
 import type { AgentRuntimeStatus } from "../shared/contracts";
 import { BUILT_IN_AGENT_NAMES, type AgentDefinition, resolveAgentCatalog } from "./agent-catalog";
@@ -66,6 +67,13 @@ const SESSION_RESUME_REQUIRED_DETAIL_CODE = "SESSION_RESUME_REQUIRED";
 
 function telemetryAgentName(agentName: string): string {
   return BUILT_IN_AGENT_NAMES.has(agentName) ? agentName : "custom";
+}
+
+export function shouldCloseRuntimeAfterUserCancel(
+  agentName: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return platform === "win32" && agentName === "codex";
 }
 
 type AgentChangeSession = {
@@ -586,6 +594,9 @@ export class BabyMenuAgentRuntime {
 
       this.activeTurnCancel = async () => {
         await turn.cancel({ reason: "user" });
+        if (shouldCloseRuntimeAfterUserCancel(this.agentName)) {
+          await this.closeRuntime("user-cancel", undefined, true);
+        }
       };
       const output = await this.collectTurnOutput(turn, turnLog, options);
       await turnLog.finish("completed").catch(() => undefined);
@@ -658,7 +669,7 @@ export class BabyMenuAgentRuntime {
    * live runtime and delete the persisted session file ourselves.
    */
   private async discardPersistedSession(reason: string): Promise<void> {
-    await this.closeRuntime(reason, true, true);
+    await this.closeRuntime(reason, undefined, true);
     await rm(this.persistedSessionFilePath(), { force: true }).catch(() => undefined);
   }
 
@@ -692,9 +703,14 @@ export class BabyMenuAgentRuntime {
   }
 
   private async closeRuntime(reason: string, discardPersistentState?: boolean, ignoreCloseError = false): Promise<void> {
+    const preserveCancelledCodexThread = reason === "user-cancel" || reason === "session-resume-required";
     if (!this.runtime || !this.handle) {
       delete process.env.BABY_MENU_CLI_MODE;
       delete process.env.BABY_MENU_WSL_DISTRIBUTION;
+      delete process.env[CODEX_CANCEL_RESUME_PATH_ENV];
+      if (discardPersistentState || !preserveCancelledCodexThread) {
+        await rm(this.codexCancelResumePath(), { force: true }).catch(() => undefined);
+      }
       this.runtime = null;
       this.handle = null;
       this.registryOverridesStale = false;
@@ -707,6 +723,10 @@ export class BabyMenuAgentRuntime {
     this.handle = null;
     delete process.env.BABY_MENU_CLI_MODE;
     delete process.env.BABY_MENU_WSL_DISTRIBUTION;
+    delete process.env[CODEX_CANCEL_RESUME_PATH_ENV];
+    if (discardPersistentState || !preserveCancelledCodexThread) {
+      await rm(this.codexCancelResumePath(), { force: true }).catch(() => undefined);
+    }
     this.registryOverridesStale = false;
     const close = runtime.close({ handle, reason, discardPersistentState });
     if (ignoreCloseError) {
@@ -747,6 +767,11 @@ export class BabyMenuAgentRuntime {
       delete process.env.BABY_MENU_CLI_MODE;
       delete process.env.BABY_MENU_WSL_DISTRIBUTION;
     }
+    if (process.platform === "win32" && this.agentName === "codex") {
+      process.env[CODEX_CANCEL_RESUME_PATH_ENV] = this.codexCancelResumePath();
+    } else {
+      delete process.env[CODEX_CANCEL_RESUME_PATH_ENV];
+    }
     this.runtime = createAcpRuntime({
       cwd: agentCwd,
       sessionStore: createFileSessionStore({ stateDir }),
@@ -758,6 +783,11 @@ export class BabyMenuAgentRuntime {
       timeoutMs: this.requestTimeoutMs,
     });
     return this.runtime;
+  }
+
+  private codexCancelResumePath(): string {
+    const stateDir = this.paths?.agentStateDir ?? getAgentStateDir(this.rootDir);
+    return join(stateDir, "codex-cancel-resume-thread");
   }
 
   private collectTurnOutput(

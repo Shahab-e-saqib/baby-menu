@@ -16,16 +16,21 @@ const FAKE = join(
 function waitForFile(path: string): Promise<void> {
   if (existsSync(path)) return Promise.resolve();
   return new Promise((resolve, reject) => {
+    const finishIfPresent = () => {
+      if (!existsSync(path)) return false;
+      watcher.close();
+      resolve();
+      return true;
+    };
     const watcher = watch(dirname(path), (_event, filename) => {
-      if (filename === basename(path) && existsSync(path)) {
-        watcher.close();
-        resolve();
-      }
+      if (filename === basename(path)) finishIfPresent();
     });
     watcher.on("error", (error) => {
       watcher.close();
       reject(error);
     });
+    // Close the gap between the initial existsSync and watcher attachment.
+    finishIfPresent();
   });
 }
 
@@ -113,6 +118,32 @@ describe("CodexDriver (against a fake codex CLI)", () => {
     expect(updates.find((u) => u.sessionUpdate === "agent_message_chunk")).toMatchObject({
       content: { type: "text", text: "resumed:second" },
     });
+  });
+
+  it("resumes the cancelled thread after the driver is recreated", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "codex-cancel-resume-"));
+    const resumeThreadPath = join(dir, "thread-id");
+    driver = new CodexDriver({ command: FAKE, resumeThreadPath });
+    await driver.start(tmpdir());
+    const gate = await slowCancelGate();
+    const controller = new AbortController();
+    const firstPrompt = driver.prompt(gate.prompt, () => {}, controller.signal);
+    await waitForFile(resumeThreadPath);
+    controller.abort();
+    await gate.terminated;
+    await gate.release();
+    await expect(firstPrompt).resolves.toBe("cancelled");
+    await driver.dispose();
+
+    driver = new CodexDriver({ command: FAKE, resumeThreadPath });
+    await driver.start(tmpdir());
+    const updates: schema.SessionUpdate[] = [];
+    await driver.prompt("continued", (update) => updates.push(update), new AbortController().signal);
+
+    expect(updates.find((update) => update.sessionUpdate === "agent_message_chunk")).toMatchObject({
+      content: { type: "text", text: "resumed:continued" },
+    });
+    expect(await readFile(resumeThreadPath, "utf8")).toBe("fake-thread");
   });
 
   it("does not pass --color to `exec resume` (codex rejects it with exit 2)", async () => {

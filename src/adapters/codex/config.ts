@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+export const CODEX_CANCEL_RESUME_PATH_ENV = "BABY_MENU_CODEX_CANCEL_RESUME_PATH";
+
 /**
  * Resolves codex's config/auth home, matching the CLI: $CODEX_HOME if set,
  * otherwise ~/.codex. Auth already resolves via CODEX_HOME (see driver.ts), and

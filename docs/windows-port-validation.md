@@ -31,10 +31,11 @@ Item 10 records the platform-portable subset CI runs on a Windows host.
    Native local-drive launches retain hardware acceleration and GPU sandbox.
    `tests/windows-unc-runtime.test.ts`.
 
-7. **Bounded Windows process-tree cancellation** (`src/adapters/shared/process-tree.ts`) — `createChildTerminator` runs `taskkill /T /F /PID <pid>` (numeric pid, no shell interpolation).
+7. **Bounded Windows process-tree cancellation** (`src/main/agent-runtime.ts`, `src/adapters/codex/driver.ts`, `src/adapters/shared/process-tree.ts`) — `createChildTerminator` runs `taskkill /T /F /PID <pid>` (numeric pid, no shell interpolation).
    Five-second timeout, at most two attempts; after a failed first attempt the terminator does not separately kill the immediate child so the forced attempt can retry the living PID.
    If both fail, falls back to force-killing the immediate child.
-   `tests/process-tree.test.ts`.
+   After Baby Menu cancels Codex on Windows, it also closes the owning ACP runtime so its adapter launcher and WSL/provider descendants enter that bounded cleanup path. The close does not discard the persistent ACP conversation; the Codex adapter preserves the provider thread id across runtime recreation so the next turn resumes it. This extra closure is scoped to product-owned Windows Codex cancellation, leaving Claude, macOS/Linux behavior, and ordinary completion unchanged.
+   `tests/process-tree.test.ts`, `tests/agent-runtime.test.ts`, `tests/adapter-codex-driver.test.ts`.
 
 8. **`pnpm.cmd`-safe dev launcher** (`scripts/dev.mjs`) — package-manager invocations use `shell: true`.
    `tests/dev-launcher.test.ts`.
@@ -68,7 +69,7 @@ Item 10 records the platform-portable subset CI runs on a Windows host.
     `tests/popover-position.test.ts` proves the popover stays within the work area on the expected side of the taskbar without launching Electron.
 
 16. **Unavailable native agent UX and opt-in WSL bridge** (`src/main/agent-runtime.ts`, `src/main/wsl-cli.ts`, `src/main/preferences.ts`, `src/renderer/settings/SettingsView.tsx`, `src/adapters/shared/platform-spawn.ts`, `src/adapters/shared/types.ts`) — Settings keeps Claude Code and Codex visible when their host CLI cannot be found. They remain disabled in Native mode, with provider-specific install, system `PATH`, and restart guidance, but can be selected after explicitly choosing WSL mode on Windows. Native/WSL mode persists per built-in while one selected distribution is shared; neither changes implicitly.
-    Every WSL turn checks `wsl.exe`, the exact selected distribution, drive-letter workspace translation/access, and the provider CLI through the distribution's Bash login environment before adapter launch, and rejects UNC workspaces. The adapter launches `wsl.exe` through a fixed login-shell wrapper, passing the provider command and arguments positionally so prompts, paths, and distribution names are never interpolated into shell text. Existing stdin streaming, cancellation, and descendant cleanup remain intact. Native and WSL failures withhold paths, usernames, environment values, tokens, and provider stderr.
+    Every WSL turn checks `wsl.exe`, the exact selected distribution, drive-letter workspace translation/access, and the provider CLI through the distribution's Bash login environment before adapter launch, and rejects UNC workspaces. The adapter launches `wsl.exe` through a fixed login-shell wrapper, passing the provider command and arguments positionally so prompts, paths, and distribution names are never interpolated into shell text. The bounded cancellation and descendant-cleanup contract is documented in item 7. Native and WSL failures withhold paths, usernames, environment values, tokens, and provider stderr.
     `tests/agent-catalog.test.ts`, `tests/agent-runtime.test.ts`, `tests/wsl-cli.test.ts`, `tests/preferences.test.ts`, `tests/settings-view.test.tsx`, `tests/app-lifecycle-windows.test.ts`, `tests/adapter-claude-driver.test.ts`, `tests/adapter-codex-driver.test.ts`, `tests/ipc-capabilities.test.ts`.
 
 ## Manual Windows 11 validation (evidence from WSL-interop check)
